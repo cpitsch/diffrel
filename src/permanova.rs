@@ -61,22 +61,24 @@ pub fn permanova(
 
     // Compute squared distance matrix
     // TODO: could use Array2::uninit if n is very large
+    let mut ss_total = 0.0;
     #[allow(non_snake_case)]
     let mut D2 = Array2::zeros((n, n));
     for i in 0..n {
-        // D[(i, i)] = 0.0;
         for j in i + 1..n {
             let dist = squared_euclidean_distance(
                 X.row(i).as_slice().unwrap(),
                 X.row(j).as_slice().unwrap(),
             );
+            ss_total += dist;
             D2[(i, j)] = dist;
             D2[(j, i)] = dist;
         }
     }
 
     // SS_T
-    let ss_total = compute_total_sum_of_squares(&D2);
+    ss_total /= D2.nrows() as f64;
+    assert_eq!(ss_total, compute_total_sum_of_squares(&D2));
 
     // F
     let pseudo_f = compute_pseudo_f(&D2, &groups, ss_total);
@@ -138,6 +140,7 @@ where
 
 /// Takes D2, the matrix containing squared distances, and computes the total
 /// sum of squares.
+#[allow(dead_code)]
 fn compute_total_sum_of_squares(#[allow(non_snake_case)] D2: &Array2<f64>) -> f64 {
     let mut total = 0.0;
     let n = D2.nrows();
@@ -151,34 +154,43 @@ fn compute_total_sum_of_squares(#[allow(non_snake_case)] D2: &Array2<f64>) -> f6
     // D.iter().map(|&d| d * d).sum::<f64>() / (D.nrows() as f64)
 }
 
-fn compute_sum_of_squares_between(
-    #[allow(non_snake_case)] D2: &Array2<f64>,
-    groups: &[u8],
-    ss_total: f64,
-) -> f64 {
-    let mut ss_group_0 = 0.0;
-    let mut ss_group_1 = 0.0;
+/// Compute the `SS_W`statistic for the Pseudo-F statistic. For two groups.
+///
+/// * `groups`: 0 if that value belongs to group 1, 1 if it belongs to group two
+///
+/// TODO: The counts within groups never really change. Could pass them to skip
+/// some computation
+fn compute_sum_of_squares_within(#[allow(non_snake_case)] D2: &Array2<f64>, groups: &[u8]) -> f64 {
+    let mut group_sums: [f64; 2] = [0.0, 0.0];
+    let mut group_sizes: [usize; 2] = [0, 0];
 
     let n = D2.nrows();
     for i in 0..n - 1 {
+        let group_i = groups[i] as usize;
+        group_sizes[group_i] += 1;
         for j in (i + 1)..n {
             let d = D2[(i, j)];
-            match (groups[i], groups[j]) {
-                (0, 0) => ss_group_0 += d,
-                (1, 1) => ss_group_1 += d,
-                _ => {}
+            let group_j = groups[j] as usize;
+            if group_i == group_j {
+                group_sums[group_i] += d;
             }
         }
     }
 
-    ss_group_0 /= groups.iter().filter(|&&g| g == 0).count() as f64;
-    ss_group_1 /= groups.iter().filter(|&&g| g == 1).count() as f64;
+    // The last element wasnt counted in the loop
+    group_sizes[groups[n - 1] as usize] += 1;
 
-    ss_group_0 + ss_group_1 - ss_total
+    group_sums
+        .into_iter()
+        .zip(group_sizes)
+        .map(|(sum, size)| sum / size as f64)
+        .sum()
 }
 
-fn compute_sum_of_squares_within(ss_total: f64, ss_between: f64) -> f64 {
-    ss_total - ss_between
+/// Compute the `SS_A` statistic as the difference between `SS_T` and `SS_W`
+#[inline(always)]
+fn compute_sum_of_squares_between(ss_total: f64, ss_within: f64) -> f64 {
+    ss_total - ss_within
 }
 
 fn compute_pseudo_f(
@@ -188,10 +200,10 @@ fn compute_pseudo_f(
 ) -> f64 {
     // p is number of groups, i.e., 2. Thus, `ss_between`, i.e., SS_A is divided py 2-1=1
 
-    // SS_A
-    let ss_between = compute_sum_of_squares_between(D2, groups, ss_total);
     // SS_W
-    let ss_within = compute_sum_of_squares_within(ss_total, ss_between);
+    let ss_within = compute_sum_of_squares_within(D2, groups);
+    // SS_A
+    let ss_between = compute_sum_of_squares_between(ss_total, ss_within);
 
     ss_between / (ss_within / (D2.nrows() - 2) as f64)
 }
@@ -206,7 +218,7 @@ pub fn compare<'a>(
     log_2: &'a OCEL,
     num_permuations: usize,
     permutation_seed: Option<u64>,
-) -> HashMap<&'a str, PermAnovaResult> {
+) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError> {
     let counts_1 = extract_e2o_relation_counts(log_1);
     let counts_2 = extract_e2o_relation_counts(log_2);
 
@@ -214,11 +226,12 @@ pub fn compare<'a>(
 
     let mut event_type_to_pval = HashMap::new();
 
+    // TODO: Could parallelize? But right now, I parallelize across permutations
     for event_type in all_event_types {
         let (Some(rel_counts_1), Some(rel_counts_2)) =
             (counts_1.get(event_type), counts_2.get(event_type))
         else {
-            println!("{event_type} only in one log");
+            log::info!("{event_type} only in one log");
             continue;
         };
 
@@ -235,13 +248,13 @@ pub fn compare<'a>(
         let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
 
         let start = std::time::Instant::now();
-        let res = permanova(sample_1, sample_2, num_permuations, permutation_seed);
-        println!("{event_type} took {:?}", start.elapsed());
+        let res = permanova(sample_1, sample_2, num_permuations, permutation_seed)?;
+        log::trace!("{event_type} took {:?}", start.elapsed());
 
         event_type_to_pval.insert(event_type, res);
     }
 
-    event_type_to_pval
+    Ok(event_type_to_pval)
 }
 
 fn encode_relation_counts(
