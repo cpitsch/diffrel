@@ -6,8 +6,10 @@ use std::{
 use ndarray::{Array2, Axis, concatenate};
 use process_mining::OCEL;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use thiserror::Error;
+
+#[cfg(feature = "rayon")]
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::per_relation::{OcelEventRelationshipCount, extract_e2o_relation_counts};
 
@@ -78,7 +80,6 @@ pub fn permanova(
 
     // SS_T
     ss_total /= D2.nrows() as f64;
-    assert_eq!(ss_total, compute_total_sum_of_squares(&D2));
 
     // F
     let pseudo_f = compute_pseudo_f(&D2, &groups, ss_total);
@@ -93,7 +94,7 @@ pub fn permanova(
 
         (0..num_permuations)
             .map(|_| {
-                groups.partial_shuffle(&mut rng, sample_1.nrows());
+                groups.shuffle(&mut rng);
                 compute_pseudo_f(&D2, &groups, ss_total)
             })
             .collect()
@@ -110,7 +111,7 @@ pub fn permanova(
                     StdRng::from_os_rng()
                 };
                 let mut shuffled_groups = groups.clone();
-                shuffled_groups.partial_shuffle(&mut rng, n1);
+                shuffled_groups.shuffle(&mut rng);
                 compute_pseudo_f(&D2, &shuffled_groups, ss_total)
             })
             .collect()
