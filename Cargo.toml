@@ -11,6 +11,13 @@ rand = "0.9.2"
 rayon = { version = "1.11.0", optional = true }
 thiserror = "2.0.18"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "permanova"
+harness = false
+
 [features]
 default = [ "rayon" ]
 rayon = [ "dep:rayon" ]
