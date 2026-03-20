@@ -11,7 +11,9 @@ use thiserror::Error;
 #[cfg(feature = "rayon")]
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-use crate::per_relation::{OcelEventRelationshipCount, extract_e2o_relation_counts};
+use crate::per_relation::{
+    OcelEventRelationshipCount, OcelEventRelationshipCounter, extract_e2o_relation_counts,
+};
 
 #[derive(Debug, Clone)]
 pub struct PermAnovaResult {
@@ -130,9 +132,7 @@ pub fn permanova(
     })
 }
 
-fn squared_euclidean_distance(v1: &[f64], v2: &[f64]) -> f64
-where
-{
+fn squared_euclidean_distance(v1: &[f64], v2: &[f64]) -> f64 {
     v1.iter()
         .zip(v2.iter())
         .map(|(a, b)| (a - b).powi(2))
@@ -141,6 +141,8 @@ where
 
 /// Takes D2, the matrix containing squared distances, and computes the total
 /// sum of squares.
+/// Now unused since the total sum of squares (`SS_T`) is computed on the fly as D2
+/// is computed.
 #[allow(dead_code)]
 fn compute_total_sum_of_squares(#[allow(non_snake_case)] D2: &Array2<f64>) -> f64 {
     let mut total = 0.0;
@@ -194,6 +196,7 @@ fn compute_sum_of_squares_between(ss_total: f64, ss_within: f64) -> f64 {
     ss_total - ss_within
 }
 
+/// Compute the Pseudo-F statistic for the Permanova test.
 fn compute_pseudo_f(
     #[allow(non_snake_case)] D2: &Array2<f64>,
     groups: &[u8],
@@ -223,6 +226,15 @@ pub fn compare<'a>(
     let counts_1 = extract_e2o_relation_counts(log_1);
     let counts_2 = extract_e2o_relation_counts(log_2);
 
+    compare_counts(&counts_1, &counts_2, num_permuations, permutation_seed)
+}
+
+pub fn compare_counts<'a>(
+    counts_1: &OcelEventRelationshipCounter<'a>,
+    counts_2: &OcelEventRelationshipCounter<'a>,
+    num_permuations: usize,
+    permutation_seed: Option<u64>,
+) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError> {
     let all_event_types: HashSet<_> = counts_1.keys().chain(counts_2.keys()).copied().collect();
 
     let mut event_type_to_pval = HashMap::new();
@@ -258,7 +270,7 @@ pub fn compare<'a>(
     Ok(event_type_to_pval)
 }
 
-fn encode_relation_counts(
+pub fn encode_relation_counts(
     relation_counts: &[OcelEventRelationshipCount<'_>],
     ordered_relation_types: &[(&'_ str, &'_ str)],
 ) -> Array2<f64> {

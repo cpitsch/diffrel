@@ -6,7 +6,7 @@ use std::{
 use ndarray::Array1;
 use process_mining::core::event_data::object_centric::{OCEL, OCELEvent};
 
-/// Built for an [`OCELEvent`], maps qualifier and object type to a count
+/// Built for an [`OCELEvent`], maps qualifier and object type to a count.
 #[derive(Debug, Clone, Default)]
 pub struct OcelEventRelationshipCount<'a>(pub HashMap<(&'a str, &'a str), usize>);
 
