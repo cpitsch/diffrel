@@ -4,7 +4,7 @@ use ndarray::Array1;
 use process_mining::OCEL;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 
-use crate::per_relation::extract_e2o_relation_counts;
+use crate::relation_extraction::extract_e2o_relation_counts;
 
 /// Compare the E2O relationships between the two event logs. Returns a hashmap
 /// of event type -> p-value

@@ -11,7 +11,7 @@ use thiserror::Error;
 #[cfg(feature = "rayon")]
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-use crate::per_relation::{
+use crate::relation_extraction::{
     OcelEventRelationshipCount, OcelEventRelationshipCounter, extract_e2o_relation_counts,
 };
 

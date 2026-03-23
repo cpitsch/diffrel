@@ -6,7 +6,9 @@ use std::{
 use ndarray::Array1;
 use process_mining::core::event_data::object_centric::{OCEL, OCELEvent};
 
-/// Built for an [`OCELEvent`], maps qualifier and object type to a count.
+/// Built for an [`OCELEvent`], maps qualifier and object type to a count (the number
+/// of objects with that object type that are in a relation with this event with
+/// the given qualifier).
 #[derive(Debug, Clone, Default)]
 pub struct OcelEventRelationshipCount<'a>(pub HashMap<(&'a str, &'a str), usize>);
 
@@ -55,6 +57,8 @@ impl<'a> OcelEventRelationshipCount<'a> {
     }
 }
 
+/// Tracks, per event type, a list encodings of those events w.r.t. the counts
+/// of E20 relationships it has with which object types and which qualifiers.
 #[derive(Debug, Clone, Default)]
 pub struct OcelEventRelationshipCounter<'a>(
     pub HashMap<&'a str, Vec<OcelEventRelationshipCount<'a>>>,
@@ -75,6 +79,8 @@ impl<'a> DerefMut for OcelEventRelationshipCounter<'a> {
 }
 
 impl<'a> OcelEventRelationshipCounter<'a> {
+    /// Get all qualifiers observed in E20 relationships involving events with
+    /// a certain event type.
     pub fn all_relation_types(&self, event_type: &str) -> Option<HashSet<&(&'a str, &'a str)>> {
         Some(
             self.get(event_type)?
@@ -85,6 +91,9 @@ impl<'a> OcelEventRelationshipCounter<'a> {
     }
 }
 
+/// Extract E20 relation counts. That is an [`OcelEventRelationshipCounter`] is
+/// extracted, which is a hashmap mapping each event type to a vec containing a (qualifier, count)
+/// mapping for each individual event with this type.
 pub fn extract_e2o_relation_counts<'a>(ocel: &'a OCEL) -> OcelEventRelationshipCounter<'a> {
     let object_id_to_type: HashMap<&str, &str> = ocel
         .objects
