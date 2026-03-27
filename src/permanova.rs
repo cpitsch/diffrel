@@ -36,6 +36,9 @@ pub enum PermAnovaError {
 ///
 ///     nrows = number of observations
 ///     ncols = number of features
+///
+/// Returns an `Err` if the number of features (columns) in the two matrices doesn't
+/// match
 pub fn permanova(
     mut sample_1: Array2<f64>,
     mut sample_2: Array2<f64>,
@@ -246,6 +249,7 @@ pub fn compare_counts<'a>(
             continue;
         };
 
+        // Get an index of ordered relation types (tuple of object type and qualifier)
         let ordered_relation_types: Vec<_> = rel_counts_1
             .iter()
             .chain(rel_counts_2.iter())
@@ -268,6 +272,12 @@ pub fn compare_counts<'a>(
     Ok(event_type_to_pval)
 }
 
+/// Encode relation counts for an event type in a matrix. Each row is an observation
+/// (event) and columns correspond to the relation types (I.e., `(qualifier, object_type)` pairs),
+/// as given in `ordered_relation_types`.
+///
+/// Observed relation counts that are not in `ordered_relation_types` are ignored
+/// and relation types that were not observed for an event are counted as `0`.
 pub fn encode_relation_counts(
     relation_counts: &[OcelEventRelationshipCount<'_>],
     ordered_relation_types: &[(&'_ str, &'_ str)],

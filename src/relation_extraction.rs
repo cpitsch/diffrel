@@ -9,6 +9,9 @@ use process_mining::core::event_data::object_centric::{OCEL, OCELEvent};
 /// Built for an [`OCELEvent`], maps qualifier and object type to a count (the number
 /// of objects with that object type that are in a relation with this event with
 /// the given qualifier).
+///
+/// That is, the first element in the key is the relationship qualifier, and the
+/// second element is the object type.
 #[derive(Debug, Clone, Default)]
 pub struct OcelEventRelationshipCount<'a>(pub HashMap<(&'a str, &'a str), usize>);
 
@@ -43,12 +46,21 @@ impl<'a> OcelEventRelationshipCount<'a> {
         ret
     }
 
+    /// Encode the [`OcelEventRelationshipCount`] as an Array of usize. Only considers
+    /// relationship types contained in `relationship_types`, and of they are not in
+    /// `self`, their count is assumed to be 0 (not observed).
     pub fn encoded(&self, relationship_types: &[(&str, &str)]) -> Array1<usize> {
         relationship_types
             .iter()
             .map(|rel_type| self.get(rel_type).copied().unwrap_or_default())
             .collect()
     }
+
+    /// Encode the [`OcelEventRelationshipCount`] as an Array of floats. Only considers
+    /// relationship types contained in `relationship_types`, and of they are not in
+    /// `self`, their count is assumed to be 0 (not observed).
+    ///
+    /// (To be used to set a row of a matrix in permanova.)
     pub fn encoded_f64(&self, relationship_types: &[(&str, &str)]) -> Array1<f64> {
         relationship_types
             .iter()
