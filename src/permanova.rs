@@ -29,6 +29,10 @@ pub enum PermAnovaError {
         "Both samples must have the same number of features. `sample_1` has {0} columns and `sample_2`has {1}"
     )]
     NumFeaturesMismatch(usize, usize),
+    #[error(
+        "Insufficient observations to compute the F-Statistic in the  Permanova test. Need at least 3 observations between both samples. Found {0}"
+    )]
+    InsufficientObservations(usize),
 }
 
 /// Perform a Permanova test between two multivariate samples. Each row in the matrices
@@ -40,11 +44,15 @@ pub enum PermAnovaError {
 /// Returns an `Err` if the number of features (columns) in the two matrices doesn't
 /// match
 pub fn permanova(
-    mut sample_1: Array2<f64>,
-    mut sample_2: Array2<f64>,
+    sample_1: Array2<f64>,
+    sample_2: Array2<f64>,
     num_permuations: usize,
     permutation_seed: Option<u64>,
 ) -> Result<PermAnovaResult, PermAnovaError> {
+    let n1 = sample_1.nrows();
+    let n2 = sample_2.nrows();
+    let n = n1 + n2;
+
     if sample_1.ncols() != sample_2.ncols() {
         return Err(PermAnovaError::NumFeaturesMismatch(
             sample_1.ncols(),
@@ -52,13 +60,10 @@ pub fn permanova(
         ));
     }
 
-    if sample_1.nrows() > sample_2.nrows() {
-        std::mem::swap(&mut sample_1, &mut sample_2)
+    if n < 3 {
+        return Err(PermAnovaError::InsufficientObservations(n));
     }
 
-    let n1 = sample_1.nrows();
-    let n2 = sample_2.nrows();
-    let n = n1 + n2;
     let num_features = sample_1.ncols();
 
     #[allow(non_snake_case)]
