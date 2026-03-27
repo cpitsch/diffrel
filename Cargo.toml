@@ -14,10 +14,6 @@ thiserror = "2.0.18"
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
-[[bench]]
-name = "permanova"
-harness = false
-
 [features]
 default = [ "rayon" ]
 rayon = [ "dep:rayon" ]
