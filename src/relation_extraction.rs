@@ -23,7 +23,7 @@ impl<'a> Deref for OcelEventRelationshipCount<'a> {
     }
 }
 
-impl<'a> DerefMut for OcelEventRelationshipCount<'a> {
+impl DerefMut for OcelEventRelationshipCount<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -41,7 +41,7 @@ impl<'a> OcelEventRelationshipCount<'a> {
 
             *ret.0
                 .entry((rel.qualifier.as_str(), object_type))
-                .or_default() += 1
+                .or_default() += 1;
         });
         ret
     }
@@ -84,7 +84,7 @@ impl<'a> Deref for OcelEventRelationshipCounter<'a> {
     }
 }
 
-impl<'a> DerefMut for OcelEventRelationshipCounter<'a> {
+impl DerefMut for OcelEventRelationshipCounter<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }

@@ -82,7 +82,7 @@ pub fn drilldown<'a>(
                 let mut q: Vec<_> = sorted_dims.iter().map(|&i| f_stats[i]).collect();
 
                 for i in 1..q.len() {
-                    q[i] = q[i].max(q[i - 1])
+                    q[i] = q[i].max(q[i - 1]);
                 }
                 // TODO: Also return f so we can report un-corrected p-value?
                 q
@@ -122,7 +122,7 @@ pub fn drilldown<'a>(
     // Still sorted by their F-Statistic - now need to ensure that less significant
     // dimensions don't get a smaller p-value than more significant dimensions
     for i in (0..results.len() - 1).rev() {
-        results[i].1.p_value = results[i].1.p_value.max(results[i + 1].1.p_value)
+        results[i].1.p_value = results[i].1.p_value.max(results[i + 1].1.p_value);
     }
 
     Ok(results.into_iter().collect())

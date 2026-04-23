@@ -44,8 +44,8 @@ pub enum PermAnovaError {
 /// Returns an `Err` if the number of features (columns) in the two matrices doesn't
 /// match
 pub fn permanova(
-    sample_1: Array2<f64>,
-    sample_2: Array2<f64>,
+    sample_1: &Array2<f64>,
+    sample_2: &Array2<f64>,
     num_permuations: usize,
     permutation_seed: Option<u64>,
 ) -> Result<PermAnovaResult, PermAnovaError> {
@@ -270,14 +270,14 @@ pub fn compare_counts<'a>(
             .flat_map(|x| x.keys())
             .collect::<HashSet<_>>()
             .into_iter()
-            .cloned()
+            .copied()
             .collect();
 
         let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
         let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
 
         let start = std::time::Instant::now();
-        let res = permanova(sample_1, sample_2, num_permuations, permutation_seed)?;
+        let res = permanova(&sample_1, &sample_2, num_permuations, permutation_seed)?;
         log::trace!("{event_type} took {:?}", start.elapsed());
 
         event_type_to_pval.insert(event_type, res);
