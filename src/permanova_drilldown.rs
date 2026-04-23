@@ -97,18 +97,25 @@ pub fn drilldown<'a>(
             let original_index = sorted_dims[i];
             let pseudo_f = f_statistics[original_index];
 
-            let p_value = vals.iter().filter(|&&perm_f| perm_f >= pseudo_f).count() as f64
-                / (num_permuations as f64);
-
             let key = ordered_relation_types[original_index];
-            (
-                key,
+
+            let result = if pseudo_f.is_nan() {
+                PermAnovaResult {
+                    pseudo_f,
+                    permutation_distribution: vals,
+                    p_value: 1.0,
+                }
+            } else {
+                let p_value = vals.iter().filter(|&&perm_f| perm_f >= pseudo_f).count() as f64
+                    / (num_permuations as f64);
                 PermAnovaResult {
                     pseudo_f,
                     permutation_distribution: vals,
                     p_value,
-                },
-            )
+                }
+            };
+
+            (key, result)
         })
         .collect();
 

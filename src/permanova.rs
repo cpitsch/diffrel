@@ -96,6 +96,15 @@ pub fn permanova(
     // SS_T
     let ss_total = total_sq_norm_sum - total_vec_sq_sum / n as f64;
 
+    if ss_total == 0.0 {
+        // ss_within and ss_between will be 0, giving us pseudo_f NaN
+        return Ok(PermAnovaResult {
+            pseudo_f: f64::NAN,
+            permutation_distribution: vec![f64::NAN; num_permuations],
+            p_value: 1.0,
+        });
+    }
+
     #[cfg_attr(feature = "rayon", allow(unused_mut))]
     let mut groups: Vec<u8> = repeat_n(0, n1).chain(repeat_n(1, n2)).collect();
 
