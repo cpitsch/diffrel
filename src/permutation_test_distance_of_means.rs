@@ -4,7 +4,7 @@ use ndarray::Array1;
 use process_mining::OCEL;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 
-use crate::relation_extraction::extract_e2o_relation_counts;
+use crate::relation_extraction::{OcelIndex, extract_e2o_relation_counts};
 
 /// Compare the E2O relationships between the two event logs. Returns a hashmap
 /// of event type -> p-value
@@ -17,8 +17,10 @@ pub fn compare<'a>(
     num_permutations: usize,
     permutation_seed: Option<u64>,
 ) -> HashMap<&'a str, f64> {
-    let counts_1 = extract_e2o_relation_counts(log_1);
-    let counts_2 = extract_e2o_relation_counts(log_2);
+    let indexed_1 = OcelIndex::from(log_1);
+    let indexed_2 = OcelIndex::from(log_2);
+    let counts_1 = extract_e2o_relation_counts(&indexed_1);
+    let counts_2 = extract_e2o_relation_counts(&indexed_2);
 
     let all_event_types: HashSet<_> = counts_1.keys().chain(counts_2.keys()).copied().collect();
 

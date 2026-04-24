@@ -20,7 +20,7 @@ use thiserror::Error;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::relation_extraction::{
-    OcelEventRelationshipCount, OcelEventRelationshipCounter, extract_e2o_relation_counts,
+    OcelIndex, OcelRelationshipCounter, RelationshipCount, extract_e2o_relation_counts,
 };
 
 #[derive(Debug, Clone)]
@@ -46,8 +46,8 @@ pub enum PermAnovaError {
 /// Perform a Permanova test between two multivariate samples. Each row in the matrices
 /// corresponds to one instance and columns represent features. As such:
 ///
-///     nrows = number of observations
-///     ncols = number of features
+/// nrows = number of observations
+/// ncols = number of features
 ///
 /// Returns an `Err` if the number of features (columns) in the two matrices doesn't
 /// match
@@ -246,28 +246,29 @@ pub fn compare<'a>(
     num_permuations: usize,
     permutation_seed: Option<u64>,
 ) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError> {
-    let counts_1 = extract_e2o_relation_counts(log_1);
-    let counts_2 = extract_e2o_relation_counts(log_2);
+    let indexed_1 = OcelIndex::from(log_1);
+    let indexed_2 = OcelIndex::from(log_2);
+    let counts_1 = extract_e2o_relation_counts(&indexed_1);
+    let counts_2 = extract_e2o_relation_counts(&indexed_2);
 
     compare_counts(&counts_1, &counts_2, num_permuations, permutation_seed)
 }
 
 pub fn compare_counts<'a>(
-    counts_1: &OcelEventRelationshipCounter<'a>,
-    counts_2: &OcelEventRelationshipCounter<'a>,
+    counts_1: &OcelRelationshipCounter<'a>,
+    counts_2: &OcelRelationshipCounter<'a>,
     num_permuations: usize,
     permutation_seed: Option<u64>,
 ) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError> {
-    let all_event_types: HashSet<_> = counts_1.keys().chain(counts_2.keys()).copied().collect();
+    let all_group_keys: HashSet<_> = counts_1.keys().chain(counts_2.keys()).copied().collect();
 
-    let mut event_type_to_pval = HashMap::new();
+    let mut group_key_to_pval = HashMap::new();
 
     // TODO: Could parallelize? But right now, I parallelize across permutations
-    for event_type in all_event_types {
-        let (Some(rel_counts_1), Some(rel_counts_2)) =
-            (counts_1.get(event_type), counts_2.get(event_type))
+    for key in all_group_keys {
+        let (Some(rel_counts_1), Some(rel_counts_2)) = (counts_1.get(key), counts_2.get(key))
         else {
-            log::info!("{event_type} only in one log");
+            log::info!("{key} only in one log");
             continue;
         };
 
@@ -286,12 +287,12 @@ pub fn compare_counts<'a>(
 
         let start = std::time::Instant::now();
         let res = permanova(&sample_1, &sample_2, num_permuations, permutation_seed)?;
-        log::trace!("{event_type} took {:?}", start.elapsed());
+        log::trace!("{key} took {:?}", start.elapsed());
 
-        event_type_to_pval.insert(event_type, res);
+        group_key_to_pval.insert(key, res);
     }
 
-    Ok(event_type_to_pval)
+    Ok(group_key_to_pval)
 }
 
 /// Encode relation counts for an event type in a matrix. Each row is an observation
@@ -301,7 +302,7 @@ pub fn compare_counts<'a>(
 /// Observed relation counts that are not in `ordered_relation_types` are ignored
 /// and relation types that were not observed for an event are counted as `0`.
 pub fn encode_relation_counts(
-    relation_counts: &[OcelEventRelationshipCount<'_>],
+    relation_counts: &[RelationshipCount<'_>],
     ordered_relation_types: &[(&'_ str, &'_ str)],
 ) -> Array2<f64> {
     let mut res = Array2::zeros((relation_counts.len(), ordered_relation_types.len()));
