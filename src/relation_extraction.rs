@@ -1,3 +1,6 @@
+//! Extract Relation counts. For now, just E2O, but in the future, this will also
+//! contain extraction of O2O, O2E (reverse of E2O), and E2E (causal, eventually-follows, ...)
+
 use std::{
     collections::{HashMap, HashSet},
     ops::{Deref, DerefMut},

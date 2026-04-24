@@ -1,3 +1,11 @@
+//! An implementation of the Permutational Analysis of Variance (PERMANOVA) test.
+//!
+//! Uses the algebraic identity:
+//!
+//! `$$\sum_{i<j} \left\|x_i-x_j\right\|^2=n\sum_i \left\|x_i\right\|^2-\left\|\sum_i x_i\right\|^2$$`
+//!
+//! to compute the Pseudo-F statistic in linear time.
+
 use std::{
     collections::{HashMap, HashSet},
     iter::repeat_n,

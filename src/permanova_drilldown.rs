@@ -1,3 +1,10 @@
+//! A specialized implementation of the Permutational Analysis of Variance (PERMANOVA)
+//! test for drilling down on a significant test result.
+//!
+//! Intended use: performing an individual PERMANOVA test on each dimension of the
+//! data that yielded a significant result. Using the same permutations as the
+//! significant test allows us to use a stronger multiple testing correction.
+
 use std::{collections::HashMap, iter::repeat_n};
 
 use itertools::Itertools;

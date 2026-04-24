@@ -1,3 +1,6 @@
+//! Contains correction methods for multiple testing (using the Holm-Bonferroni
+//! correction).
+
 use std::collections::HashMap;
 
 /// Check each p-value for significance using the Holm-Bonferroni procedure
