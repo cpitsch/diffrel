@@ -118,11 +118,13 @@ pub fn extract_e2o_relation_counts<'a>(
                         .map(|evt| {
                             let mut counts = RelationshipCount::default();
                             for rel in &evt.relationships {
-                                let otype = indexed_ocel
-                                    .object_id_to_type
-                                    .get(rel.object_id.as_str())
-                                    .expect("All objects are recorded in indexed_ocel");
-                                *counts.entry((&rel.qualifier, otype)).or_default() += 1;
+                                // Otype is only `None` if an event has a relationship to
+                                // a non-existent object
+                                if let Some(otype) =
+                                    indexed_ocel.object_id_to_type.get(rel.object_id.as_str())
+                                {
+                                    *counts.entry((&rel.qualifier, otype)).or_default() += 1;
+                                }
                             }
                             counts
                         })
