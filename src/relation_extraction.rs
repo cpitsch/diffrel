@@ -142,11 +142,12 @@ pub fn extract_o2o_relation_counts<'a>(
         let mut counts = RelationshipCount::default();
         if let Some(o2o_rels) = indexed_ocel.object_id_to_o2o.get(oid) {
             for (qualifier, other_oid) in o2o_rels {
-                let other_type = indexed_ocel
-                    .object_id_to_type
-                    .get(other_oid)
-                    .expect("All objects are correctly recorded in indexed_ocel");
-                *counts.entry((qualifier, other_type)).or_default() += 1;
+                // other_type is only None if the OCEL contains relationships to
+                // non-existent objects
+                if let Some(other_type) = indexed_ocel.object_id_to_type.get(other_oid) {
+                    *counts.entry((qualifier, other_type)).or_default() += 1;
+                }
+                // TODO: Print a warning?
             }
         };
         // Push even if the object has no o2o relations.
