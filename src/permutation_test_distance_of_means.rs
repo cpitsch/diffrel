@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use ndarray::Array1;
-use process_mining::OCEL;
+use process_mining::{OCEL, core::event_data::object_centric::linked_ocel::SlimLinkedOCEL};
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 
-use crate::relation_extraction::{OcelIndex, extract_e2o_relation_counts};
+use crate::relation_extraction::extract_e2o_relation_counts;
 
 /// Compare the E2O relationships between the two event logs. Returns a hashmap
 /// of event type -> p-value
@@ -16,11 +16,11 @@ pub fn compare<'a>(
     log_2: &'a OCEL,
     num_permutations: usize,
     permutation_seed: Option<u64>,
-) -> HashMap<&'a str, f64> {
-    let indexed_1 = OcelIndex::from(log_1);
-    let indexed_2 = OcelIndex::from(log_2);
-    let counts_1 = extract_e2o_relation_counts(&indexed_1);
-    let counts_2 = extract_e2o_relation_counts(&indexed_2);
+) -> HashMap<String, f64> {
+    let slocel_1 = SlimLinkedOCEL::from_ocel(log_1.clone());
+    let slocel_2 = SlimLinkedOCEL::from_ocel(log_2.clone());
+    let counts_1 = extract_e2o_relation_counts(&slocel_1);
+    let counts_2 = extract_e2o_relation_counts(&slocel_2);
 
     let all_event_types: HashSet<_> = counts_1.keys().chain(counts_2.keys()).copied().collect();
 
@@ -112,7 +112,7 @@ pub fn compare<'a>(
             .filter(|ts| **ts > test_stat_1)
             .count() as f64
             / num_permutations as f64;
-        event_type_to_pval.insert(event_type, p);
+        event_type_to_pval.insert(event_type.to_string(), p);
     }
 
     event_type_to_pval

@@ -1,49 +1,11 @@
 use std::{
     collections::HashMap,
+    hash::Hash,
     ops::{Deref, DerefMut},
 };
 
 use ndarray::Array1;
-use process_mining::{OCEL, core::event_data::object_centric::OCELEvent};
-
-#[derive(Default, Debug, Clone)]
-pub struct OcelIndex<'a> {
-    events_by_type: HashMap<&'a str, Vec<&'a OCELEvent>>,
-    object_id_to_type: HashMap<&'a str, &'a str>,
-    /// WARN: If an object is not related to any events, it will not be included as a key.
-    object_id_to_events: HashMap<&'a str, Vec<(&'a str, &'a OCELEvent)>>,
-    /// (`qualifier`, `other_object_id`)
-    object_id_to_o2o: HashMap<&'a str, Vec<(&'a str, &'a str)>>,
-}
-
-impl<'a> From<&'a OCEL> for OcelIndex<'a> {
-    fn from(ocel: &'a OCEL) -> Self {
-        let mut res = Self::default();
-        for event in &ocel.events {
-            res.events_by_type
-                .entry(&event.event_type)
-                .or_default()
-                .push(event);
-            for rel in &event.relationships {
-                res.object_id_to_events
-                    .entry(&rel.object_id)
-                    .or_default()
-                    .push((&rel.qualifier, event));
-            }
-        }
-
-        for obj in &ocel.objects {
-            res.object_id_to_type.insert(&obj.id, &obj.object_type);
-            obj.relationships.iter().for_each(|rel| {
-                res.object_id_to_o2o
-                    .entry(&obj.id)
-                    .or_default()
-                    .push((&rel.qualifier, &rel.object_id));
-            });
-        }
-        res
-    }
-}
+use process_mining::core::event_data::object_centric::linked_ocel::LinkedOCELAccess;
 
 #[derive(Debug, Clone, Default)]
 pub struct RelationshipCount<'a>(pub HashMap<(&'a str, &'a str), usize>);
@@ -104,28 +66,22 @@ impl DerefMut for OcelRelationshipCounter<'_> {
 }
 
 pub fn extract_e2o_relation_counts<'a>(
-    indexed_ocel: &OcelIndex<'a>,
+    linked_ocel: &'a impl LinkedOCELAccess<'a>,
 ) -> OcelRelationshipCounter<'a> {
     OcelRelationshipCounter(
-        indexed_ocel
-            .events_by_type
-            .iter()
-            .map(|(&etype, events)| {
+        linked_ocel
+            .get_ev_types()
+            .map(|etype| {
                 (
                     etype,
-                    events
-                        .iter()
-                        .map(|evt| {
+                    linked_ocel
+                        .get_evs_of_type(etype)
+                        .map(|event| {
                             let mut counts = RelationshipCount::default();
-                            for rel in &evt.relationships {
-                                // Otype is only `None` if an event has a relationship to
-                                // a non-existent object
-                                if let Some(otype) =
-                                    indexed_ocel.object_id_to_type.get(rel.object_id.as_str())
-                                {
-                                    *counts.entry((&rel.qualifier, otype)).or_default() += 1;
-                                }
-                            }
+                            linked_ocel.get_e2o(event).for_each(|(qualifier, obj)| {
+                                let otype = linked_ocel.get_ob_type_of(obj);
+                                *counts.entry((qualifier, otype)).or_default() += 1;
+                            });
                             counts
                         })
                         .collect(),
@@ -136,44 +92,102 @@ pub fn extract_e2o_relation_counts<'a>(
 }
 
 pub fn extract_o2o_relation_counts<'a>(
-    indexed_ocel: &OcelIndex<'a>,
+    linked_ocel: &'a impl LinkedOCELAccess<'a>,
 ) -> OcelRelationshipCounter<'a> {
-    let mut counter = OcelRelationshipCounter::default();
+    OcelRelationshipCounter(
+        linked_ocel
+            .get_ob_types()
+            .map(|otype| {
+                (
+                    otype,
+                    linked_ocel
+                        .get_obs_of_type(otype)
+                        .map(|object| {
+                            let mut counts = RelationshipCount::default();
 
-    for (&oid, &otype) in &indexed_ocel.object_id_to_type {
-        let mut counts = RelationshipCount::default();
-        if let Some(o2o_rels) = indexed_ocel.object_id_to_o2o.get(oid) {
-            for (qualifier, other_oid) in o2o_rels {
-                // other_type is only None if the OCEL contains relationships to
-                // non-existent objects
-                if let Some(other_type) = indexed_ocel.object_id_to_type.get(other_oid) {
-                    *counts.entry((qualifier, other_type)).or_default() += 1;
-                }
-                // TODO: Print a warning?
-            }
-        };
-        // Push even if the object has no o2o relations.
-        counter.entry(otype).or_default().push(counts);
-    }
-    counter
+                            linked_ocel.get_o2o(object).for_each(|(qualifier, obj)| {
+                                let otype = linked_ocel.get_ob_type_of(obj);
+                                *counts.entry((qualifier, otype)).or_default() += 1;
+                            });
+                            counts
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
 }
 
 pub fn extract_o2e_relation_counts<'a>(
-    indexed_ocel: &OcelIndex<'a>,
+    linked_ocel: &'a impl LinkedOCELAccess<'a>,
 ) -> OcelRelationshipCounter<'a> {
-    let mut counter = OcelRelationshipCounter::default();
+    OcelRelationshipCounter(
+        linked_ocel
+            .get_ob_types()
+            .map(|otype| {
+                (
+                    otype,
+                    linked_ocel
+                        .get_obs_of_type(otype)
+                        .map(|object| {
+                            let mut counts = RelationshipCount::default();
 
-    for (&oid, &otype) in &indexed_ocel.object_id_to_type {
-        let mut counts = RelationshipCount::default();
+                            linked_ocel
+                                .get_e2o_rev(object)
+                                .for_each(|(qualifier, evt)| {
+                                    let etype = linked_ocel.get_ev_type_of(evt);
+                                    *counts.entry((qualifier, etype)).or_default() += 1;
+                                });
+                            counts
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
+}
 
-        // Push empty counts?
-        if let Some(events) = indexed_ocel.object_id_to_events.get(oid) {
-            for (qualifier, evt) in events {
-                *counts.entry((qualifier, &evt.event_type)).or_default() += 1;
+/// Two events are in an e2e relationship if they share an object and the first
+/// event occurred (directly) before the second.
+/// The relation is counted for _each shared object_. That is, if, e.g., an order is
+/// placed for multiple items, and later shipped (for those items), that eventually
+/// follows relation is counted for _each one of the items_.
+/// The qualifier of that relationship is the object type.
+// TODO: Option for directly follows?
+// TODO: Or distance? 1, ... (negative / 0 means infinite?)
+pub fn extract_e2e_relation_counts<'a, T>(linked_ocel: &'a T) -> OcelRelationshipCounter<'a>
+where
+    T: LinkedOCELAccess<'a>,
+    T::EventRepr: Eq + Hash + Copy,
+{
+    // Basically, check every object's O2E relationships
+    // TODO: event -> event index -> relcount (simplifies conversion)
+    let mut event_to_rels: HashMap<T::EventRepr, RelationshipCount<'a>> = HashMap::new();
+
+    for obj in linked_ocel.get_all_obs() {
+        let otype = linked_ocel.get_ob_type_of(&obj);
+        let mut o2e: Vec<_> = linked_ocel.get_e2o_rev(obj).collect();
+        // Sort events by timestamp -> every event is related to all following ones.
+        o2e.sort_by_key(|ev| linked_ocel.get_ev_time(ev.1));
+
+        for i in 0..(o2e.len() - 1) {
+            let ev1 = o2e[i];
+            for ev2 in &o2e[(i + 1)..] {
+                let etype_2 = linked_ocel.get_ev_type_of(ev2.1);
+
+                *event_to_rels
+                    .entry(*ev1.1)
+                    .or_default()
+                    .entry((otype, etype_2))
+                    .or_default() += 1;
             }
         }
-        // Push even if object was not related to any events
-        counter.entry(otype).or_default().push(counts);
+    }
+
+    let mut counter = OcelRelationshipCounter::default();
+    for (ev_index, rels) in event_to_rels {
+        let etype = linked_ocel.get_ev_type_of(ev_index);
+        counter.entry(etype).or_default().push(rels);
     }
 
     counter
