@@ -1,10 +1,5 @@
-//! An implementation of the Permutational Analysis of Variance (PERMANOVA) test.
-//!
-//! Uses the algebraic identity:
-//!
-//! `$$\sum_{i<j} \left\|x_i-x_j\right\|^2=n\sum_i \left\|x_i\right\|^2-\left\|\sum_i x_i\right\|^2$$`
-//!
-//! to compute the Pseudo-F statistic in linear time.
+//! An implementation of the Permutational Analysis of Variance (PERMANOVA) test
+//! for an arbitrary cost function.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -22,7 +17,7 @@ use crate::relation_extraction::{OcelRelationshipCounter, RelationshipCount};
 
 #[derive(Debug, Clone)]
 pub struct PermAnovaResult {
-    /// The test-statistic measured between the t
+    /// The measured test statistic between the inputs
     pub pseudo_f: f64,
     pub permutation_distribution: Vec<f64>,
     pub p_value: f64,
@@ -51,6 +46,7 @@ pub enum PermAnovaError {
 pub fn permanova(
     sample_1: &Array2<f64>,
     sample_2: &Array2<f64>,
+    sq_distance_function: impl Fn(&[f64], &[f64]) -> f64,
     num_permuations: usize,
     permutation_seed: Option<u64>,
 ) -> Result<PermAnovaResult, PermAnovaError> {
@@ -69,37 +65,28 @@ pub fn permanova(
         return Err(PermAnovaError::InsufficientObservations(n));
     }
 
-    let num_features = sample_1.ncols();
-
-    #[allow(non_snake_case)]
+    #[expect(non_snake_case)]
     let X = concatenate(Axis(0), &[sample_1.view(), sample_2.view()]).unwrap();
 
-    // Precompute squared norms ||x_i||^2 once — reused across all permutations.
-    let sq_norms: Vec<f64> = (0..n)
-        .map(|i| X.row(i).iter().map(|&x| x * x).sum())
-        .collect();
+    // Compute (squared) distance matrix
+    let mut ss_total = 0.0;
+    #[expect(non_snake_case)]
+    let mut D2 = Array2::zeros((n, n));
 
-    // We can compute SS_T as:
-    //
-    // $$\frac{1}{n}\sum_{i<j}\left\|x_i-x_j\right\|^2$$
-    //
-    // since it is equivalent to (see compute_pseudo_f_fast documentation):
-    //
-    // $SS_T=\sum_i\left\|x_i\right\|^2 - \frac{\left\|\sum_i x_i\right\|^2}{n}$$
-    let total_sq_norm_sum: f64 = sq_norms.iter().sum();
-    let total_vec_sq_sum: f64 = {
-        let mut col_sums = vec![0.0f64; num_features];
-        for i in 0..n {
-            let row = X.row(i);
-            for d in 0..num_features {
-                col_sums[d] += row[d];
-            }
+    for i in 0..n {
+        for j in i + 1..n {
+            // let dist = squared_euclidean_distance(
+            let dist = sq_distance_function(
+                X.row(i).as_slice().expect("X is contiguous"),
+                X.row(j).as_slice().expect("X is contiguous"),
+            );
+            ss_total += dist;
+            D2[(i, j)] = dist;
+            D2[(j, i)] = dist;
         }
-        col_sums.iter().map(|&x| x * x).sum()
-    };
+    }
 
-    // SS_T
-    let ss_total = total_sq_norm_sum - total_vec_sq_sum / n as f64;
+    ss_total /= n as f64;
 
     if ss_total == 0.0 {
         // ss_within and ss_between will be 0, giving us pseudo_f NaN
@@ -114,7 +101,7 @@ pub fn permanova(
     let mut groups: Vec<u8> = repeat_n(0, n1).chain(repeat_n(1, n2)).collect();
 
     // F
-    let pseudo_f = compute_pseudo_f_fast(&X, &sq_norms, &groups, ss_total);
+    let pseudo_f = compute_pseudo_f(&D2, &groups, ss_total);
 
     #[cfg(not(feature = "rayon"))]
     let permutation_distribution: Vec<f64> = {
@@ -127,7 +114,7 @@ pub fn permanova(
         (0..num_permuations)
             .map(|_| {
                 groups.shuffle(&mut rng);
-                compute_pseudo_f_fast(&X, &sq_norms, &groups, ss_total)
+                compute_pseudo_f(&D2, &groups, ss_total)
             })
             .collect()
     };
@@ -144,7 +131,7 @@ pub fn permanova(
                 };
                 let mut shuffled_groups = groups.clone();
                 shuffled_groups.shuffle(&mut rng);
-                compute_pseudo_f_fast(&X, &sq_norms, &shuffled_groups, ss_total)
+                compute_pseudo_f(&D2, &shuffled_groups, ss_total)
             })
             .collect()
     };
@@ -162,98 +149,69 @@ pub fn permanova(
     })
 }
 
-/// Compute the pseudo-F statistic faster using the algebraic identity:
+/// Compute the `SS_W`statistic for the Pseudo-F statistic. For two groups.
 ///
-/// `$$\sum_{i<j} \left\|x_i-x_j\right\|^2=n\sum_i \left\|x_i\right\|^2-\left\|\sum_i x_i\right\|^2$$`
+/// * `groups`: 0 if that value belongs to group 1, 1 if it belongs to group two
 ///
-/// So, while the naive implementation (strictly following the definition) would
-/// compute for each group `$G_k$`:
-///
-/// `$$\frac{1}{n_k}\sum_{i<j\in G_k}\left\|x_i-x_j\right\|^2$$`,
-///
-/// we can equivalently compute:
-///
-/// `$$\sum_{i\in G_k}\left\|x_i\right\|^2-\frac{\left\|\sum_{i\in G_k} x_i\right\|^2}{n_k}$$`
-///
-/// This makes the computation of the pseudo-F statistic linear instead of quadratic
-///
-/// # Arguments
-///
-/// * `X`: The matrix of observations. Rows = observations, columns = features.
-/// * `sq_norms`: The squared norms of rows in X. That is, `sq_norms_i=sum(x^2 for x in X.row(i))`
-/// * `groups`: Assignment of rows in X to groups. 0 if the row belongs to log 1,
-///   1 if it belongs to log 2
-/// * `ss_total`: The `SS_T` measure (`1/n * distances_for_i<j`)
-fn compute_pseudo_f_fast(
-    #[allow(non_snake_case)] X: &Array2<f64>,
-    sq_norms: &[f64],
-    groups: &[u8],
-    ss_total: f64,
-) -> f64 {
-    let n = X.nrows();
-    let num_features = X.ncols();
+/// TODO: The counts within groups never really change. Could pass them to skip
+/// some computation
+fn compute_sum_of_squares_within(#[expect(non_snake_case)] D2: &Array2<f64>, groups: &[u8]) -> f64 {
+    let mut group_sums: [f64; 2] = [0.0, 0.0];
+    let mut group_sizes: [usize; 2] = [0, 0];
 
-    // Two components to compute:
-    // $$\sum_{i\in G_k}\left\|x_i\right\|^2$$ --> sum_sq
-    // $$\frac{\left\|\sum_{i\in G_k} x_i\right\|^2}{n_k}$$ --> ||group_sums||^2 / group_sizes
-
-    // The running sum of the rows belonging to each group
-    let mut group_sums = [vec![0.0f64; num_features], vec![0.0f64; num_features]];
-    // The running size of each group
-    let mut group_sizes = [0usize; 2];
-    // The running sum of the squared norms of the rows for each group
-    let mut sum_sq = [0.0f64; 2];
-
-    for i in 0..n {
-        let g = groups[i] as usize;
-        sum_sq[g] += sq_norms[i];
-        group_sizes[g] += 1;
-
-        // Add the row to the respective sum
-        let row = X.row(i);
-        let vs = &mut group_sums[g];
-        for d in 0..num_features {
-            vs[d] += row[d];
+    let n = D2.nrows();
+    for i in 0..n - 1 {
+        let group_i = groups[i] as usize;
+        group_sizes[group_i] += 1;
+        for j in (i + 1)..n {
+            let d = D2[(i, j)];
+            let group_j = groups[j] as usize;
+            if group_i == group_j {
+                group_sums[group_i] += d;
+            }
         }
     }
 
-    // SS_W = sum for all groups of $$\sum_{i\in G_k}\left\|x_i\right\|^2-\frac{\left\|\sum_{i\in G_k} x_i\right\|^2}{n_k}$$
-    let ss_within = group_sums
-        .into_iter()
-        .zip(sum_sq)
-        .zip(group_sizes)
-        .map(|((group_sum, sum_of_squares), size)| {
-            let sq_of_sum: f64 = group_sum.iter().map(|&x| x * x).sum();
-            sum_of_squares - (sq_of_sum / size as f64)
-        })
-        .sum::<f64>();
+    // The last element wasnt counted in the loop
+    group_sizes[groups[n - 1] as usize] += 1;
 
-    let ss_between = ss_total - ss_within;
-    ss_between / (ss_within / (n - 2) as f64)
+    group_sums
+        .into_iter()
+        .zip(group_sizes)
+        .map(|(sum, size)| sum / size as f64)
+        .sum()
 }
 
-// Compare the E2O relationship cardinalities between two event logs using a
-// Permanova test. Returns a hashmap of event type -> p-value
-//
-// If an event type only occurs in one of the event logs, no p-value is computed,
-// i.e., the event type is _not_ contained as a key in the hashmap.
-// pub fn compare<'a>(
-//     log_1: &'a OCEL,
-//     log_2: &'a OCEL,
-//     num_permuations: usize,
-//     permutation_seed: Option<u64>,
-// ) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError> {
-//     let indexed_1 = OcelIndex::from(log_1);
-//     let indexed_2 = OcelIndex::from(log_2);
-//     let counts_1 = extract_e2o_relation_counts(&indexed_1);
-//     let counts_2 = extract_e2o_relation_counts(&indexed_2);
-//
-//     compare_counts(&counts_1, &counts_2, num_permuations, permutation_seed)
-// }
+/// Compute the `SS_A` statistic as the difference between `SS_T` and `SS_W`
+#[inline(always)]
+fn compute_sum_of_squares_between(ss_total: f64, ss_within: f64) -> f64 {
+    ss_total - ss_within
+}
+
+/// Compute the Pseudo-F Statistic
+/// * `D2`: The matrix of squared distances.
+/// * `groups`: Assignment of rows in X to groups. 0 if the row belongs to log 1,
+///   1 if it belongs to log 2
+/// * `ss_total`: The `SS_T` measure (`1/n * distances_for_i<j`)
+fn compute_pseudo_f(
+    #[expect(non_snake_case)] D2: &Array2<f64>,
+    groups: &[u8],
+    ss_total: f64,
+) -> f64 {
+    // p is number of groups, i.e., 2. Thus, `ss_between`, i.e., SS_A is divided by 2-1=1
+
+    // SS_W
+    let ss_within = compute_sum_of_squares_within(D2, groups);
+    // SS_A
+    let ss_between = compute_sum_of_squares_between(ss_total, ss_within);
+
+    ss_between / (ss_within / (D2.nrows() - 2) as f64)
+}
 
 pub fn compare_counts<'a>(
     counts_1: &OcelRelationshipCounter<'a>,
     counts_2: &OcelRelationshipCounter<'a>,
+    sq_distance_function: impl Fn(&[f64], &[f64]) -> f64,
     num_permuations: usize,
     permutation_seed: Option<u64>,
 ) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError> {
@@ -283,7 +241,13 @@ pub fn compare_counts<'a>(
         let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
 
         let start = std::time::Instant::now();
-        let res = permanova(&sample_1, &sample_2, num_permuations, permutation_seed)?;
+        let res = permanova(
+            &sample_1,
+            &sample_2,
+            &sq_distance_function,
+            num_permuations,
+            permutation_seed,
+        )?;
         log::trace!("{key} took {:?}", start.elapsed());
 
         group_key_to_pval.insert(key, res);

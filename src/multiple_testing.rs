@@ -7,7 +7,7 @@ use std::collections::HashMap;
 /// to correct for multiple-testing.
 ///
 /// Procedure from Holm et al. "A simple sequentially rejective multiple test
-/// procedure" (1979)
+/// procedure" (1979).
 ///
 /// Returns the hashmap mapping each key (event type) to the p-value and a bool
 /// indicating significance.
