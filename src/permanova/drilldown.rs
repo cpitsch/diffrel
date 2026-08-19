@@ -13,9 +13,10 @@ use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 use crate::permanova::{PermAnovaError, PermAnovaResult};
 
-/// Drill down on a significant result from [`crate::permanova::compare_counts`] by
-/// performing separate tests on each relation type. The seed is necessary to
-/// ensure that the tests use the same permutations as the original test.
+/// Drill down on a significant result from [`crate::permanova::base::compare_counts`]
+/// or [`crate::permanova::fast_euclidean::compare_counts`] by performing separate
+/// tests on each relation type. The seed is necessary to ensure that the tests
+/// use the same permutations as the original test.
 ///
 /// * `ordered_relation_types` is the index used to create the matrices, i.e., a
 ///   mapping of column index to relation type
