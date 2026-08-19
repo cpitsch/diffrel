@@ -188,7 +188,7 @@ fn f_per_dim_fast(
 
     let mut group_sums = [vec![0.0f64; dims], vec![0.0f64; dims]];
     let mut group_sq_sums = [vec![0.0f64; dims], vec![0.0f64; dims]];
-    let mut group_sizes = [0; 2];
+    let mut group_sizes = [0usize; 2];
 
     for (i, row) in X.rows().into_iter().enumerate() {
         let group = groups[i] as usize;
@@ -207,7 +207,7 @@ fn f_per_dim_fast(
                 .zip(group_sq_sums.iter())
                 .zip(group_sizes.iter())
                 .map(|((group_sum, group_sq_sum), group_size)| {
-                    group_sq_sum[i] - (group_sum[i] * group_sum[i]) / f64::from(*group_size)
+                    group_sq_sum[i] - (group_sum[i] * group_sum[i]) / (*group_size as f64)
                 })
                 .sum();
 

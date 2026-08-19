@@ -6,8 +6,8 @@ use std::{
     iter::repeat_n,
 };
 
-use ndarray::{Array2, Axis, concatenate};
-use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use ndarray::{concatenate, Array2, Axis};
+use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use thiserror::Error;
 
 #[cfg(feature = "rayon")]
@@ -78,7 +78,6 @@ pub fn permanova(
 
     for i in 0..n {
         for j in i + 1..n {
-            // let dist = squared_euclidean_distance(
             let dist = sq_distance_function(
                 X.row(i).as_slice().expect("X is contiguous"),
                 X.row(j).as_slice().expect("X is contiguous"),

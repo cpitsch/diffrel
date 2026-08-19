@@ -212,25 +212,6 @@ fn compute_pseudo_f_fast(
     ss_between / (ss_within / (n - 2) as f64)
 }
 
-// Compare the E2O relationship cardinalities between two event logs using a
-// Permanova test. Returns a hashmap of event type -> p-value
-//
-// If an event type only occurs in one of the event logs, no p-value is computed,
-// i.e., the event type is _not_ contained as a key in the hashmap.
-// pub fn compare<'a>(
-//     log_1: &'a OCEL,
-//     log_2: &'a OCEL,
-//     num_permuations: usize,
-//     permutation_seed: Option<u64>,
-// ) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError> {
-//     let indexed_1 = OcelIndex::from(log_1);
-//     let indexed_2 = OcelIndex::from(log_2);
-//     let counts_1 = extract_e2o_relation_counts(&indexed_1);
-//     let counts_2 = extract_e2o_relation_counts(&indexed_2);
-//
-//     compare_counts(&counts_1, &counts_2, num_permuations, permutation_seed)
-// }
-
 pub fn compare_counts<'a>(
     counts_1: &OcelRelationshipCounter<'a>,
     counts_2: &OcelRelationshipCounter<'a>,
