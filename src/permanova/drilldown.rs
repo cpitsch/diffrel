@@ -13,7 +13,7 @@ use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 use crate::permanova::{PermAnovaError, PermAnovaResult};
 
-/// Drill down on a significant result from [`crate::permanova::compare`] by
+/// Drill down on a significant result from [`crate::permanova::compare_counts`] by
 /// performing separate tests on each relation type. The seed is necessary to
 /// ensure that the tests use the same permutations as the original test.
 ///

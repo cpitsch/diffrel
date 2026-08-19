@@ -15,6 +15,9 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::relation_extraction::{OcelRelationshipCounter, RelationshipCount};
 
+pub mod drilldown;
+pub mod fast_euclidean;
+
 #[derive(Debug, Clone)]
 pub struct PermAnovaResult {
     /// The measured test statistic between the inputs
