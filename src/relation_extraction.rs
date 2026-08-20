@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     hash::Hash,
     ops::{Deref, DerefMut},
 };
@@ -18,7 +18,7 @@ impl std::fmt::Display for Qualifier<'_> {
         match self {
             Qualifier::Single(s) => write!(f, "{s}"),
             Qualifier::Multiple(set) => {
-                write!(f, "{}", set.iter().copied().collect::<Vec<_>>().join(","))
+                write!(f, "{}", set.iter().copied().collect::<Vec<_>>().join(", "))
             }
         }
     }
@@ -220,7 +220,10 @@ pub fn extract_o2e_relation_counts<'a>(
 /// event occurred  before the second.
 /// In that case, an E2E relationship is extracted with the exact combination of
 /// object types as qualifier.
-pub fn extract_e2e_relation_counts<'a, T>(linked_ocel: &'a T) -> OcelRelationshipCounter<'a>
+pub fn extract_e2e_relation_counts<'a, T>(
+    linked_ocel: &'a T,
+    object_types: Option<&HashSet<&str>>,
+) -> OcelRelationshipCounter<'a>
 where
     T: LinkedOCELAccess<'a>,
     T::EventRepr: Eq + Hash + Copy,
@@ -236,6 +239,10 @@ where
     // this is worse
     for obj in linked_ocel.get_all_obs() {
         let otype = linked_ocel.get_ob_type_of(&obj);
+        if !object_types.is_none_or(|x| x.contains(otype)) {
+            continue;
+        }
+
         let mut o2e: Vec<_> = linked_ocel.get_e2o_rev(obj).collect();
         // Sort events by timestamp -> every event is related to all following ones.
         o2e.sort_by_key(|ev| linked_ocel.get_ev_time(ev.1));
