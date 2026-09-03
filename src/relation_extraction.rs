@@ -281,7 +281,7 @@ where
     T: LinkedOCELAccess<'a>,
     T::EventRepr: Eq + Hash + Copy,
 {
-    let e2e_type = e2e_type.unwrap_or(E2ERelationType::EventuallyFollows);
+    let e2e_type = e2e_type.unwrap_or_default();
     // Basically, check every object's O2E relationships
     // TODO: event -> event index -> relcount (simplifies conversion)
     let mut event_to_rels: HashMap<T::EventRepr, RelationshipCount<'a>> = HashMap::new();
