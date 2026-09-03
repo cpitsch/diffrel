@@ -170,64 +170,181 @@ pub fn extract_o2e_relation_counts<'a>(
     )
 }
 
-// /// Two events are in an e2e relationship if they share an object and the first
-// /// event occurred (directly) before the second.
-// /// The relation is counted for _each shared object_. That is, if, e.g., an order is
-// /// placed for multiple items, and later shipped (for those items), that eventually
-// /// follows relation is counted for _each one of the items_.
-// /// The qualifier of that relationship is the object type.
-// // TODO: Option for directly follows?
-// // TODO: Or distance? 1, ... (negative / 0 means infinite?)
-// pub fn extract_e2e_relation_counts<'a, T>(linked_ocel: &'a T) -> OcelRelationshipCounter<'a>
-// where
-//     T: LinkedOCELAccess<'a>,
-//     T::EventRepr: Eq + Hash + Copy,
-// {
-//     // Basically, check every object's O2E relationships
-//     // TODO: event -> event index -> relcount (simplifies conversion)
-//     let mut event_to_rels: HashMap<T::EventRepr, RelationshipCount<'a>> = HashMap::new();
-//
-//     for obj in linked_ocel.get_all_obs() {
-//         let otype = linked_ocel.get_ob_type_of(&obj);
-//         let mut o2e: Vec<_> = linked_ocel.get_e2o_rev(obj).collect();
-//         // Sort events by timestamp -> every event is related to all following ones.
-//         o2e.sort_by_key(|ev| linked_ocel.get_ev_time(ev.1));
-//
-//         for i in 0..(o2e.len() - 1) {
-//             let ev1 = o2e[i];
-//             for ev2 in &o2e[(i + 1)..] {
-//                 let etype_2 = linked_ocel.get_ev_type_of(ev2.1);
-//
-//                 *event_to_rels
-//                     .entry(*ev1.1)
-//                     .or_default()
-//                     .entry((Qualifier::Single(otype), etype_2))
-//                     .or_default() += 1;
-//             }
-//         }
-//     }
-//
-//     let mut counter = OcelRelationshipCounter::default();
-//     for (ev_index, rels) in event_to_rels {
-//         let etype = linked_ocel.get_ev_type_of(ev_index);
-//         counter.entry(etype).or_default().push(rels);
-//     }
-//
-//     counter
-// }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum E2ERelationType {
+    DirectlyFollows,
+    #[default]
+    EventuallyFollows,
+}
 
-/// Two events are in an e2e relationship if they share an object and the first
-/// event occurred  before the second.
-/// In that case, an E2E relationship is extracted with the exact combination of
-/// object types as qualifier.
 pub fn extract_e2e_relation_counts<'a, T>(
     linked_ocel: &'a T,
     object_types: Option<&HashSet<&str>>,
+    e2e_type: Option<E2ERelationType>,
+    merge_object_types: bool,
 ) -> OcelRelationshipCounter<'a>
 where
     T: LinkedOCELAccess<'a>,
     T::EventRepr: Eq + Hash + Copy,
 {
+    if merge_object_types {
+        extract_e2e_relation_counts_merged(linked_ocel, object_types, e2e_type)
+    } else {
+        extract_e2e_relation_counts_dedup_separate(linked_ocel, object_types, e2e_type)
+    }
+}
+
+/// Two events are in an e2e relationship if they share an object and the first
+/// event occurred (directly) before the second.
+/// The relation is counted for each shared _object type_. That is, if, e.g.,
+/// an order is placed for multiple items, and later shipped (for those items),
+/// that eventually follows relation is only counted _once_. If the items are shipped
+/// separately due to their large amount, this is counted twice, once per unique event.
+/// The qualifier of that relationship is the object type.
+pub fn extract_e2e_relation_counts_dedup_separate<'a, T>(
+    linked_ocel: &'a T,
+    object_types: Option<&HashSet<&str>>,
+    e2e_type: Option<E2ERelationType>,
+) -> OcelRelationshipCounter<'a>
+where
+    T: LinkedOCELAccess<'a>,
+    T::EventRepr: Eq + Hash + Copy,
+{
+    let e2e_type = e2e_type.unwrap_or_default();
+    let mut event_to_rels: HashMap<T::EventRepr, RelationshipCount<'a>> = HashMap::new();
+
+    for ev1 in linked_ocel.get_all_evs() {
+        let ev1_time = linked_ocel.get_ev_time(ev1);
+
+        let mut shared: HashMap<T::EventRepr, HashSet<&'a str>> = HashMap::new();
+
+        for (_q, o) in linked_ocel.get_e2o(ev1) {
+            let otype = linked_ocel.get_ob_type_of(o);
+
+            if !object_types.is_none_or(|x| x.contains(otype)) {
+                continue;
+            }
+
+            // If there was some way to guarantee that the LinkedOcel was sorted
+            // "by o2e"..
+            match e2e_type {
+                E2ERelationType::DirectlyFollows => {
+                    let mut o2e: Vec<_> = linked_ocel.get_e2o_rev(o).collect();
+                    o2e.sort_by_key(|(_, ev)| linked_ocel.get_ev_time(**ev));
+
+                    if let Some(pos) = o2e.iter().position(|(_, ev)| **ev == ev1)
+                        && let Some((_, ev2)) = o2e.get(pos + 1)
+                    {
+                        shared.entry(**ev2).or_default().insert(otype);
+                    }
+                }
+                E2ERelationType::EventuallyFollows => {
+                    for (_q2, ev2) in linked_ocel.get_e2o_rev(o) {
+                        if linked_ocel.get_ev_time(*ev2) > ev1_time {
+                            shared.entry(*ev2).or_default().insert(otype);
+                        }
+                    }
+                }
+            };
+        }
+
+        shared.into_iter().for_each(|(ev2, otypes)| {
+            let etype_2 = linked_ocel.get_ev_type_of(ev2);
+            let rels = event_to_rels.entry(ev1).or_default();
+            for otype in otypes {
+                *rels.entry((Qualifier::Single(otype), etype_2)).or_default() += 1;
+            }
+        });
+    }
+
+    let mut counter = OcelRelationshipCounter::default();
+    for (ev_index, rels) in event_to_rels {
+        let etype = linked_ocel.get_ev_type_of(ev_index);
+        counter.entry(etype).or_default().push(rels);
+    }
+
+    counter
+}
+
+/// Two events are in an E2E relationship if they share an object and the first
+/// event occurred (directly) before the second.
+/// The relation is counted for _each shared object_. That is, if, e.g., an order is
+/// placed for multiple items, and later shipped (for those items), that E2E
+/// relation is counted for _each one of the items_.
+/// The qualifier of that relationship is the object type.
+pub fn extract_e2e_relation_counts_separate<'a, T>(
+    linked_ocel: &'a T,
+    object_types: Option<&HashSet<&str>>,
+    e2e_type: Option<E2ERelationType>,
+) -> OcelRelationshipCounter<'a>
+where
+    T: LinkedOCELAccess<'a>,
+    T::EventRepr: Eq + Hash + Copy,
+{
+    let e2e_type = e2e_type.unwrap_or(E2ERelationType::EventuallyFollows);
+    // Basically, check every object's O2E relationships
+    // TODO: event -> event index -> relcount (simplifies conversion)
+    let mut event_to_rels: HashMap<T::EventRepr, RelationshipCount<'a>> = HashMap::new();
+
+    for obj in linked_ocel.get_all_obs() {
+        let otype = linked_ocel.get_ob_type_of(&obj);
+        if !object_types.is_none_or(|x| x.contains(otype)) {
+            continue;
+        }
+
+        let mut o2e: Vec<_> = linked_ocel.get_e2o_rev(obj).collect();
+        // Sort events by timestamp -> every event is related to all following ones.
+        o2e.sort_by_key(|ev| linked_ocel.get_ev_time(ev.1));
+
+        for i in 0..o2e.len().saturating_sub(1) {
+            let ev1 = o2e[i];
+            match e2e_type {
+                E2ERelationType::DirectlyFollows => {
+                    let etype_2 = linked_ocel.get_ev_type_of(o2e[i + 1].1);
+                    *event_to_rels
+                        .entry(*ev1.1)
+                        .or_default()
+                        .entry((Qualifier::Single(otype), etype_2))
+                        .or_default() += 1;
+                }
+                E2ERelationType::EventuallyFollows => {
+                    for ev2 in &o2e[(i + 1)..] {
+                        let etype_2 = linked_ocel.get_ev_type_of(ev2.1);
+                        *event_to_rels
+                            .entry(*ev1.1)
+                            .or_default()
+                            .entry((Qualifier::Single(otype), etype_2))
+                            .or_default() += 1;
+                    }
+                }
+            };
+        }
+    }
+
+    let mut counter = OcelRelationshipCounter::default();
+    for (ev_index, rels) in event_to_rels {
+        let etype = linked_ocel.get_ev_type_of(ev_index);
+        counter.entry(etype).or_default().push(rels);
+    }
+
+    counter
+}
+
+/// Two events are in an e2e relationship if they share an object and the first
+/// event occurred  before the second.
+/// In that case, an E2E relationship is extracted with the exact combination of
+/// object types as qualifier.
+pub fn extract_e2e_relation_counts_merged<'a, T>(
+    linked_ocel: &'a T,
+    object_types: Option<&HashSet<&str>>,
+    e2e_type: Option<E2ERelationType>,
+) -> OcelRelationshipCounter<'a>
+where
+    T: LinkedOCELAccess<'a>,
+    T::EventRepr: Eq + Hash + Copy,
+{
+    let e2e_type = e2e_type.unwrap_or_default();
+
     let mut paired_events: HashMap<
         (T::EventRepr, T::EventRepr),
         std::collections::BTreeSet<&'a str>,
@@ -249,12 +366,22 @@ where
 
         for i in 0..o2e.len().saturating_sub(1) {
             let ev1 = *o2e[i].1;
-            for ev2 in &o2e[(i + 1)..] {
-                paired_events
-                    .entry((ev1, *ev2.1))
-                    .or_default()
-                    .insert(otype);
-            }
+            match e2e_type {
+                E2ERelationType::DirectlyFollows => {
+                    paired_events
+                        .entry((ev1, *o2e[i + 1].1))
+                        .or_default()
+                        .insert(otype);
+                }
+                E2ERelationType::EventuallyFollows => {
+                    for ev2 in &o2e[(i + 1)..] {
+                        paired_events
+                            .entry((ev1, *ev2.1))
+                            .or_default()
+                            .insert(otype);
+                    }
+                }
+            };
         }
     }
 
