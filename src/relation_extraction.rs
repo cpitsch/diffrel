@@ -268,7 +268,10 @@ where
                         o2e.sort_by_key(|(_, ev)| linked_ocel.get_ev_time(**ev));
 
                         if let Some(pos) = o2e.iter().position(|(_, ev)| **ev == ev1)
-                            && let Some((_, ev2)) = o2e.get(pos + 1)
+                        // If the object is related via multiple qualifiers, ev1
+                        // will be in its trace multiple times, so skip it
+                            && let Some((_, ev2)) =
+                                o2e[pos + 1..].iter().find(|(_, ev)| **ev != ev1)
                         {
                             shared.entry(**ev2).or_default().insert(otype);
                         }
@@ -337,15 +340,19 @@ where
             let ev1 = o2e[i];
             match e2e_type {
                 E2ERelationType::DirectlyFollows => {
-                    let etype_2 = linked_ocel.get_ev_type_of(o2e[i + 1].1);
-                    *event_to_rels
-                        .entry(*ev1.1)
-                        .or_default()
-                        .entry((Qualifier::Single(otype), etype_2))
-                        .or_default() += 1;
+                    // If the object is related via multiple qualifiers, ev1 will be in its trace multiple times, so skip it
+                    if let Some(ev2) = o2e[i + 1..].iter().find(|(_, ev)| *ev != ev1.1) {
+                        let etype_2 = linked_ocel.get_ev_type_of(ev2.1);
+                        *event_to_rels
+                            .entry(*ev1.1)
+                            .or_default()
+                            .entry((Qualifier::Single(otype), etype_2))
+                            .or_default() += 1;
+                    }
                 }
                 E2ERelationType::EventuallyFollows => {
-                    for ev2 in &o2e[(i + 1)..] {
+                    // If the object is related via multiple qualifiers, ev1 will be in its trace multiple times, so skip it
+                    for ev2 in o2e[(i + 1)..].iter().filter(|(_, ev)| *ev != ev1.1) {
                         let etype_2 = linked_ocel.get_ev_type_of(ev2.1);
                         *event_to_rels
                             .entry(*ev1.1)
@@ -405,13 +412,17 @@ where
             let ev1 = *o2e[i].1;
             match e2e_type {
                 E2ERelationType::DirectlyFollows => {
-                    paired_events
-                        .entry((ev1, *o2e[i + 1].1))
-                        .or_default()
-                        .insert(otype);
+                    // If the object is related via multiple qualifiers, ev1 will be in its trace multiple times, so skip it
+                    if let Some(ev2) = o2e[i + 1..].iter().find(|(_, ev)| **ev != ev1) {
+                        paired_events
+                            .entry((ev1, *ev2.1))
+                            .or_default()
+                            .insert(otype);
+                    }
                 }
                 E2ERelationType::EventuallyFollows => {
-                    for ev2 in &o2e[(i + 1)..] {
+                    // If the object is related via multiple qualifiers, ev1 will be in its trace multiple times, so skip it
+                    for ev2 in o2e[(i + 1)..].iter().filter(|(_, ev)| **ev != ev1) {
                         paired_events
                             .entry((ev1, *ev2.1))
                             .or_default()
