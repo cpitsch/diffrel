@@ -103,7 +103,7 @@ where
     DependencyComponents { events, objects }
 }
 
-fn compute_divergent_pairs<'a, T>(locel: &'a T) -> HashSet<(&'a str, &'a str)>
+pub fn compute_divergent_pairs<'a, T>(locel: &'a T) -> HashSet<(&'a str, &'a str)>
 where
     T: LinkedOCELAccess<'a>,
     T::EventRepr: Eq,
