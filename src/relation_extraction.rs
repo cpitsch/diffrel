@@ -327,7 +327,7 @@ where
                         // If the object is related via multiple qualifiers, ev1
                         // will be in its trace multiple times, so skip it
                             && let Some((_, ev2)) =
-                                o2e[pos + 1..].iter().find(|(_, ev)| **ev != ev1)
+                                o2e[pos + 1..].iter().find(|(_, ev)| **ev != ev1 && linked_ocel.get_ev_time(**ev) > ev1_time)
                         {
                             shared.entry(**ev2).or_default().insert(otype);
                         }
@@ -396,8 +396,12 @@ where
             let ev1 = o2e[i];
             match e2e_type {
                 E2ERelationType::DirectlyFollows => {
+                    let ev1_time = linked_ocel.get_ev_time(ev1.1);
                     // If the object is related via multiple qualifiers, ev1 will be in its trace multiple times, so skip it
-                    if let Some(ev2) = o2e[i + 1..].iter().find(|(_, ev)| *ev != ev1.1) {
+                    if let Some(ev2) = o2e[i + 1..]
+                        .iter()
+                        .find(|(_, ev)| *ev != ev1.1 && linked_ocel.get_ev_time(*ev) > ev1_time)
+                    {
                         let etype_2 = linked_ocel.get_ev_type_of(ev2.1);
                         *event_to_rels
                             .entry(*ev1.1)
@@ -468,8 +472,12 @@ where
             let ev1 = *o2e[i].1;
             match e2e_type {
                 E2ERelationType::DirectlyFollows => {
+                    let ev1_time = linked_ocel.get_ev_time(ev1);
                     // If the object is related via multiple qualifiers, ev1 will be in its trace multiple times, so skip it
-                    if let Some(ev2) = o2e[i + 1..].iter().find(|(_, ev)| **ev != ev1) {
+                    if let Some(ev2) = o2e[i + 1..]
+                        .iter()
+                        .find(|(_, ev)| **ev != ev1 && linked_ocel.get_ev_time(**ev) > ev1_time)
+                    {
                         paired_events
                             .entry((ev1, *ev2.1))
                             .or_default()
