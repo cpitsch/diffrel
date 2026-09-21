@@ -13,7 +13,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
     permanova::{PermAnovaError, PermAnovaResult},
-    relation_extraction::{OcelRelationshipCounter, RelationshipCount},
+    relation_extraction::{OcelRelationshipCounter, Qualifier, RelationshipCount},
 };
 /// Perform a Permanova test between two multivariate samples. Each row in the matrices
 /// corresponds to one instance and columns represent features. As such:
@@ -213,7 +213,7 @@ pub fn compare_counts<'a>(
             .flat_map(|x| x.keys())
             .collect::<HashSet<_>>()
             .into_iter()
-            .copied()
+            .cloned()
             .collect();
 
         let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
@@ -243,7 +243,7 @@ pub fn compare_counts<'a>(
 /// and relation types that were not observed for an event are counted as `0`.
 pub fn encode_relation_counts(
     relation_counts: &[RelationshipCount<'_>],
-    ordered_relation_types: &[(&'_ str, &'_ str)],
+    ordered_relation_types: &[(Qualifier<'_>, &'_ str)],
 ) -> Array2<f64> {
     let mut res = Array2::zeros((relation_counts.len(), ordered_relation_types.len()));
     for (idx, counts) in relation_counts.iter().enumerate() {

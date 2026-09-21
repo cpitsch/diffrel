@@ -11,7 +11,10 @@ use itertools::Itertools;
 use ndarray::{Array2, Axis, concatenate};
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 
-use crate::permanova::{PermAnovaError, PermAnovaResult};
+use crate::{
+    permanova::{PermAnovaError, PermAnovaResult},
+    relation_extraction::Qualifier,
+};
 
 /// Drill down on a significant result from [`crate::permanova::base::compare_counts`]
 /// or [`crate::permanova::fast_euclidean::compare_counts`] by performing separate
@@ -31,8 +34,8 @@ pub fn drilldown<'a>(
     sample_2: &Array2<f64>,
     num_permuations: usize,
     permutation_seed: u64,
-    ordered_relation_types: &[(&'a str, &'a str)],
-) -> Result<HashMap<(&'a str, &'a str), PermAnovaResult>, PermAnovaError> {
+    ordered_relation_types: &[(Qualifier<'a>, &'a str)],
+) -> Result<HashMap<(Qualifier<'a>, &'a str), PermAnovaResult>, PermAnovaError> {
     let n1 = sample_1.nrows();
     let n2 = sample_2.nrows();
     let n = n1 + n2;
@@ -105,7 +108,7 @@ pub fn drilldown<'a>(
             let original_index = sorted_dims[i];
             let pseudo_f = f_statistics[original_index];
 
-            let key = ordered_relation_types[original_index];
+            let key = ordered_relation_types[original_index].clone();
 
             let result = if pseudo_f.is_nan() {
                 PermAnovaResult {
