@@ -44,6 +44,56 @@ impl DerefMut for RelationshipCount<'_> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct OcelEventRelationshipCounter<'a, E>(
+    pub HashMap<&'a str, Vec<(E, RelationshipCount<'a>)>>,
+);
+
+impl<'a, E> Deref for OcelEventRelationshipCounter<'a, E> {
+    type Target = HashMap<&'a str, Vec<(E, RelationshipCount<'a>)>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<E> DerefMut for OcelEventRelationshipCounter<'_, E> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<'a, E> Default for OcelEventRelationshipCounter<'a, E> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OcelObjectRelationshipCounter<'a, O>(
+    pub HashMap<&'a str, Vec<(O, RelationshipCount<'a>)>>,
+);
+
+impl<'a, O> Deref for OcelObjectRelationshipCounter<'a, O> {
+    type Target = HashMap<&'a str, Vec<(O, RelationshipCount<'a>)>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<O> DerefMut for OcelObjectRelationshipCounter<'_, O> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<'a, O> Default for OcelObjectRelationshipCounter<'a, O> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
 impl RelationshipCount<'_> {
     /// Encode the [`RelationshipCount`] as an Array of usize. Only considers
     /// relationship types contained in `relationship_types`, and of they are not in
@@ -85,12 +135,14 @@ impl DerefMut for OcelRelationshipCounter<'_> {
     }
 }
 
-pub fn extract_e2o_relation_counts<'a, T>(linked_ocel: &'a T) -> OcelRelationshipCounter<'a>
+pub fn extract_e2o_relation_counts<'a, T>(
+    linked_ocel: &'a T,
+) -> OcelEventRelationshipCounter<'a, T::EventRepr>
 where
     T: LinkedOCELAccess<'a> + Sync,
-    T::EventRepr: Sync,
+    T::EventRepr: Copy + Sync + Send,
 {
-    OcelRelationshipCounter(
+    OcelEventRelationshipCounter(
         linked_ocel
             .get_ev_types()
             .map(|etype| {
@@ -111,7 +163,7 @@ where
                                 .entry((Qualifier::Single(qualifier), otype))
                                 .or_default() += 1;
                         });
-                        counts
+                        (*event, counts)
                     })
                     .collect(),
                 )
@@ -120,12 +172,14 @@ where
     )
 }
 
-pub fn extract_o2o_relation_counts<'a, T>(linked_ocel: &'a T) -> OcelRelationshipCounter<'a>
+pub fn extract_o2o_relation_counts<'a, T>(
+    linked_ocel: &'a T,
+) -> OcelObjectRelationshipCounter<'a, T::ObjectRepr>
 where
     T: LinkedOCELAccess<'a> + Sync,
-    T::ObjectRepr: Sync,
+    T::ObjectRepr: Copy + Send + Sync,
 {
-    OcelRelationshipCounter(
+    OcelObjectRelationshipCounter(
         linked_ocel
             .get_ob_types()
             .map(|otype| {
@@ -148,7 +202,7 @@ where
                                 .entry((Qualifier::Single(qualifier), otype))
                                 .or_default() += 1;
                         });
-                        counts
+                        (*object, counts)
                     })
                     .collect(),
                 )
@@ -157,12 +211,14 @@ where
     )
 }
 
-pub fn extract_o2e_relation_counts<'a, T>(linked_ocel: &'a T) -> OcelRelationshipCounter<'a>
+pub fn extract_o2e_relation_counts<'a, T>(
+    linked_ocel: &'a T,
+) -> OcelObjectRelationshipCounter<'a, T::ObjectRepr>
 where
     T: LinkedOCELAccess<'a> + Sync,
-    T::ObjectRepr: Sync,
+    T::ObjectRepr: Copy + Send + Sync,
 {
-    OcelRelationshipCounter(
+    OcelObjectRelationshipCounter(
         linked_ocel
             .get_ob_types()
             .map(|otype| {
@@ -187,7 +243,7 @@ where
                                     .entry((Qualifier::Single(qualifier), etype))
                                     .or_default() += 1;
                             });
-                        counts
+                        (*object, counts)
                     })
                     .collect(),
                 )
@@ -208,7 +264,7 @@ pub fn extract_e2e_relation_counts<'a, T>(
     object_types: Option<&HashSet<&str>>,
     e2e_type: Option<E2ERelationType>,
     merge_object_types: bool,
-) -> OcelRelationshipCounter<'a>
+) -> OcelEventRelationshipCounter<'a, T::EventRepr>
 where
     T: LinkedOCELAccess<'a> + Sync,
     T::EventRepr: Eq + Hash + Copy + Sync + Send,
@@ -231,7 +287,7 @@ pub fn extract_e2e_relation_counts_dedup_separate<'a, T>(
     linked_ocel: &'a T,
     object_types: Option<&HashSet<&str>>,
     e2e_type: Option<E2ERelationType>,
-) -> OcelRelationshipCounter<'a>
+) -> OcelEventRelationshipCounter<'a, T::EventRepr>
 where
     T: LinkedOCELAccess<'a> + Sync,
     T::EventRepr: Eq + Hash + Copy + Sync + Send,
@@ -271,7 +327,7 @@ where
                         // If the object is related via multiple qualifiers, ev1
                         // will be in its trace multiple times, so skip it
                             && let Some((_, ev2)) =
-                                o2e[pos + 1..].iter().find(|(_, ev)| **ev != ev1)
+                                o2e[pos + 1..].iter().find(|(_, ev)| **ev != ev1 && linked_ocel.get_ev_time(**ev) > ev1_time)
                         {
                             shared.entry(**ev2).or_default().insert(otype);
                         }
@@ -297,10 +353,10 @@ where
         })
         .collect();
 
-    let mut counter = OcelRelationshipCounter::default();
+    let mut counter = OcelEventRelationshipCounter::default();
     for (ev_index, rels) in event_to_rels {
         let etype = linked_ocel.get_ev_type_of(ev_index);
-        counter.entry(etype).or_default().push(rels);
+        counter.entry(etype).or_default().push((ev_index, rels));
     }
 
     counter
@@ -316,7 +372,7 @@ pub fn extract_e2e_relation_counts_separate<'a, T>(
     linked_ocel: &'a T,
     object_types: Option<&HashSet<&str>>,
     e2e_type: Option<E2ERelationType>,
-) -> OcelRelationshipCounter<'a>
+) -> OcelEventRelationshipCounter<'a, T::EventRepr>
 where
     T: LinkedOCELAccess<'a>,
     T::EventRepr: Eq + Hash + Copy,
@@ -340,8 +396,12 @@ where
             let ev1 = o2e[i];
             match e2e_type {
                 E2ERelationType::DirectlyFollows => {
+                    let ev1_time = linked_ocel.get_ev_time(ev1.1);
                     // If the object is related via multiple qualifiers, ev1 will be in its trace multiple times, so skip it
-                    if let Some(ev2) = o2e[i + 1..].iter().find(|(_, ev)| *ev != ev1.1) {
+                    if let Some(ev2) = o2e[i + 1..]
+                        .iter()
+                        .find(|(_, ev)| *ev != ev1.1 && linked_ocel.get_ev_time(*ev) > ev1_time)
+                    {
                         let etype_2 = linked_ocel.get_ev_type_of(ev2.1);
                         *event_to_rels
                             .entry(*ev1.1)
@@ -365,10 +425,10 @@ where
         }
     }
 
-    let mut counter = OcelRelationshipCounter::default();
+    let mut counter = OcelEventRelationshipCounter::default();
     for (ev_index, rels) in event_to_rels {
         let etype = linked_ocel.get_ev_type_of(ev_index);
-        counter.entry(etype).or_default().push(rels);
+        counter.entry(etype).or_default().push((ev_index, rels));
     }
 
     counter
@@ -382,10 +442,10 @@ pub fn extract_e2e_relation_counts_merged<'a, T>(
     linked_ocel: &'a T,
     object_types: Option<&HashSet<&str>>,
     e2e_type: Option<E2ERelationType>,
-) -> OcelRelationshipCounter<'a>
+) -> OcelEventRelationshipCounter<'a, T::EventRepr>
 where
     T: LinkedOCELAccess<'a>,
-    T::EventRepr: Eq + Hash + Copy,
+    T::EventRepr: Eq + Hash + Copy + Sync + Send,
 {
     let e2e_type = e2e_type.unwrap_or_default();
 
@@ -412,8 +472,12 @@ where
             let ev1 = *o2e[i].1;
             match e2e_type {
                 E2ERelationType::DirectlyFollows => {
+                    let ev1_time = linked_ocel.get_ev_time(ev1);
                     // If the object is related via multiple qualifiers, ev1 will be in its trace multiple times, so skip it
-                    if let Some(ev2) = o2e[i + 1..].iter().find(|(_, ev)| **ev != ev1) {
+                    if let Some(ev2) = o2e[i + 1..]
+                        .iter()
+                        .find(|(_, ev)| **ev != ev1 && linked_ocel.get_ev_time(**ev) > ev1_time)
+                    {
                         paired_events
                             .entry((ev1, *ev2.1))
                             .or_default()
@@ -444,10 +508,10 @@ where
             .or_default() += 1;
     }
 
-    let mut counter = OcelRelationshipCounter::default();
+    let mut counter = OcelEventRelationshipCounter::default();
     for (ev_index, rels) in event_to_rels {
         let etype = linked_ocel.get_ev_type_of(ev_index);
-        counter.entry(etype).or_default().push(rels);
+        counter.entry(etype).or_default().push((ev_index, rels));
     }
 
     counter

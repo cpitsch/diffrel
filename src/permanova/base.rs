@@ -2,6 +2,7 @@
 //! for an arbitrary cost function.
 use std::{
     collections::{HashMap, HashSet},
+    hash::Hash,
     iter::repeat_n,
 };
 
@@ -13,7 +14,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
     permanova::{PermAnovaError, PermAnovaResult},
-    relation_extraction::{OcelRelationshipCounter, Qualifier, RelationshipCount},
+    relation_extraction::{Qualifier, RelationshipCount},
 };
 /// Perform a Permanova test between two multivariate samples. Each row in the matrices
 /// corresponds to one instance and columns represent features. As such:
@@ -23,9 +24,11 @@ use crate::{
 ///
 /// Returns an `Err` if the number of features (columns) in the two matrices doesn't
 /// match
-pub fn permanova(
+pub fn restricted_permanova(
     sample_1: &Array2<f64>,
     sample_2: &Array2<f64>,
+    component_ids_1: &[usize],
+    component_ids_2: &[usize],
     sq_distance_function: impl Fn(&[f64], &[f64]) -> f64,
     num_permuations: usize,
     permutation_seed: Option<u64>,
@@ -44,6 +47,8 @@ pub fn permanova(
     if n < 3 {
         return Err(PermAnovaError::InsufficientObservations(n));
     }
+
+    // TODO: component_ids shape check?
 
     #[expect(non_snake_case)]
     let X = concatenate(Axis(0), &[sample_1.view(), sample_2.view()]).unwrap();
@@ -76,11 +81,24 @@ pub fn permanova(
         });
     }
 
-    #[cfg_attr(feature = "rayon", allow(unused_mut))]
-    let mut groups: Vec<u8> = repeat_n(0, n1).chain(repeat_n(1, n2)).collect();
+    let groups: Vec<u8> = repeat_n(0, n1).chain(repeat_n(1, n2)).collect();
 
     // F
     let pseudo_f = compute_pseudo_f(&D2, &groups, ss_total);
+
+    // Precompute translation from vec of component labels to vec of items
+    let (component_ids_1, num_components_1) = compact_component_ids(component_ids_1);
+    let (component_ids_2, num_components_2) = compact_component_ids(component_ids_2);
+    let component_index_of_row: Vec<usize> = component_ids_1
+        .iter()
+        .copied()
+        .chain(component_ids_2.iter().map(|&c| c + num_components_1))
+        .collect();
+
+    // This is what we shuffle
+    let component_label: Vec<u8> = repeat_n(0u8, num_components_1)
+        .chain(repeat_n(1u8, num_components_2))
+        .collect();
 
     #[cfg(not(feature = "rayon"))]
     let permutation_distribution: Vec<f64> = {
@@ -90,10 +108,19 @@ pub fn permanova(
             StdRng::from_os_rng()
         };
 
+        let mut shuffled_labels = component_label;
+        let mut shuffled_groups = vec![0u8; n];
+
         (0..num_permuations)
             .map(|_| {
-                groups.shuffle(&mut rng);
-                compute_pseudo_f(&D2, &groups, ss_total)
+                shuffled_labels.shuffle(&mut rng);
+                shuffled_groups
+                    .iter_mut()
+                    .zip(&component_index_of_row)
+                    .for_each(|(group_of_row, &component)| {
+                        *group_of_row = shuffled_labels[component];
+                    });
+                compute_pseudo_f(&D2, &shuffled_groups, ss_total)
             })
             .collect()
     };
@@ -108,8 +135,12 @@ pub fn permanova(
                 } else {
                     StdRng::from_os_rng()
                 };
-                let mut shuffled_groups = groups.clone();
-                shuffled_groups.shuffle(&mut rng);
+                let mut shuffled_labels = component_label.clone();
+                shuffled_labels.shuffle(&mut rng);
+                let shuffled_groups: Vec<_> = component_index_of_row
+                    .iter()
+                    .map(|&c| shuffled_labels[c])
+                    .collect();
                 compute_pseudo_f(&D2, &shuffled_groups, ss_total)
             })
             .collect()
@@ -126,6 +157,40 @@ pub fn permanova(
         permutation_distribution,
         p_value,
     })
+}
+
+pub(super) fn compact_component_ids(component_ids: &[usize]) -> (Vec<usize>, usize) {
+    let mut remap: HashMap<usize, usize> = HashMap::new();
+    let compact = component_ids
+        .iter()
+        .map(|&c| {
+            let next = remap.len();
+            *remap.entry(c).or_insert(next)
+        })
+        .collect();
+
+    (compact, remap.len())
+}
+
+pub fn permanova(
+    sample_1: &Array2<f64>,
+    sample_2: &Array2<f64>,
+    sq_distance_function: impl Fn(&[f64], &[f64]) -> f64,
+    num_permuations: usize,
+    permutation_seed: Option<u64>,
+) -> Result<PermAnovaResult, PermAnovaError> {
+    let component_ids_1: Vec<_> = (0..sample_1.nrows()).collect();
+    let component_ids_2: Vec<_> = (0..sample_2.nrows()).collect();
+
+    restricted_permanova(
+        sample_1,
+        sample_2,
+        &component_ids_1,
+        &component_ids_2,
+        sq_distance_function,
+        num_permuations,
+        permutation_seed,
+    )
 }
 
 /// Compute the `SS_W`statistic for the Pseudo-F statistic. For two groups.
@@ -187,13 +252,18 @@ fn compute_pseudo_f(
     ss_between / (ss_within / (D2.nrows() - 2) as f64)
 }
 
-pub fn compare_counts<'a>(
-    counts_1: &OcelRelationshipCounter<'a>,
-    counts_2: &OcelRelationshipCounter<'a>,
+pub fn compare_counts<'a, T>(
+    counts_1: &HashMap<&'a str, Vec<(T, RelationshipCount<'a>)>>,
+    counts_2: &HashMap<&'a str, Vec<(T, RelationshipCount<'a>)>>,
+    components_1: &HashMap<T, usize>,
+    components_2: &HashMap<T, usize>,
     sq_distance_function: impl Fn(&[f64], &[f64]) -> f64,
     num_permuations: usize,
     permutation_seed: Option<u64>,
-) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError> {
+) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError>
+where
+    T: Eq + Hash + Copy,
+{
     let all_group_keys: HashSet<_> = counts_1.keys().chain(counts_2.keys()).copied().collect();
 
     let mut group_key_to_pval = HashMap::new();
@@ -210,7 +280,7 @@ pub fn compare_counts<'a>(
         let ordered_relation_types: Vec<_> = rel_counts_1
             .iter()
             .chain(rel_counts_2.iter())
-            .flat_map(|x| x.keys())
+            .flat_map(|(_, x)| x.keys())
             .collect::<HashSet<_>>()
             .into_iter()
             .cloned()
@@ -219,10 +289,17 @@ pub fn compare_counts<'a>(
         let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
         let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
 
+        let component_ids_1: Vec<usize> =
+            rel_counts_1.iter().map(|(t, _)| components_1[t]).collect();
+        let component_ids_2: Vec<usize> =
+            rel_counts_2.iter().map(|(t, _)| components_2[t]).collect();
+
         let start = std::time::Instant::now();
-        let res = permanova(
+        let res = restricted_permanova(
             &sample_1,
             &sample_2,
+            &component_ids_1,
+            &component_ids_2,
             &sq_distance_function,
             num_permuations,
             permutation_seed,
@@ -241,12 +318,12 @@ pub fn compare_counts<'a>(
 ///
 /// Observed relation counts that are not in `ordered_relation_types` are ignored
 /// and relation types that were not observed for an event are counted as `0`.
-pub fn encode_relation_counts(
-    relation_counts: &[RelationshipCount<'_>],
+pub fn encode_relation_counts<T>(
+    relation_counts: &[(T, RelationshipCount<'_>)],
     ordered_relation_types: &[(Qualifier<'_>, &'_ str)],
 ) -> Array2<f64> {
     let mut res = Array2::zeros((relation_counts.len(), ordered_relation_types.len()));
-    for (idx, counts) in relation_counts.iter().enumerate() {
+    for (idx, (_, counts)) in relation_counts.iter().enumerate() {
         res.row_mut(idx)
             .assign(&counts.encoded_f64(ordered_relation_types));
     }

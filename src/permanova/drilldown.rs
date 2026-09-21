@@ -12,7 +12,7 @@ use ndarray::{Array2, Axis, concatenate};
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 use crate::{
-    permanova::{PermAnovaError, PermAnovaResult},
+    permanova::{PermAnovaError, PermAnovaResult, base::compact_component_ids},
     relation_extraction::Qualifier,
 };
 
@@ -32,6 +32,8 @@ use crate::{
 pub fn drilldown<'a>(
     sample_1: &Array2<f64>,
     sample_2: &Array2<f64>,
+    component_ids_1: &[usize],
+    component_ids_2: &[usize],
     num_permuations: usize,
     permutation_seed: u64,
     ordered_relation_types: &[(Qualifier<'a>, &'a str)],
@@ -50,8 +52,19 @@ pub fn drilldown<'a>(
 
     let ss_totals = ss_total_per_dim(&X);
 
-    #[cfg_attr(feature = "rayon", allow(unused_mut))]
-    let mut groups: Vec<u8> = repeat_n(0, n1).chain(repeat_n(1, n2)).collect();
+    let (component_ids_1, num_components_1) = compact_component_ids(component_ids_1);
+    let (component_ids_2, num_components_2) = compact_component_ids(component_ids_2);
+    let component_index_of_row: Vec<usize> = component_ids_1
+        .iter()
+        .copied()
+        .chain(component_ids_2.iter().map(|&c| c + num_components_1))
+        .collect();
+
+    let component_label: Vec<u8> = repeat_n(0u8, num_components_1)
+        .chain(repeat_n(1u8, num_components_2))
+        .collect();
+
+    let groups: Vec<u8> = repeat_n(0, n1).chain(repeat_n(1, n2)).collect();
     let f_statistics = f_per_dim_fast(&X, &groups, &ss_totals);
 
     let sorted_dims: Vec<usize> = f_statistics
@@ -64,11 +77,19 @@ pub fn drilldown<'a>(
     #[cfg(not(feature = "rayon"))]
     let permutation_distribution: Vec<Vec<f64>> = {
         let mut rng = StdRng::seed_from_u64(permutation_seed);
+        let mut shuffled_labels = component_label;
+        let mut shuffled_groups = vec![0u8; n];
 
         (0..num_permuations)
             .map(|_| {
-                groups.shuffle(&mut rng);
-                let f_stats = f_per_dim_fast(&X, &groups, &ss_totals);
+                shuffled_labels.shuffle(&mut rng);
+                shuffled_groups
+                    .iter_mut()
+                    .zip(&component_index_of_row)
+                    .for_each(|(group_of_row, &component)| {
+                        *group_of_row = shuffled_labels[component];
+                    });
+                let f_stats = f_per_dim_fast(&X, &shuffled_groups, &ss_totals);
                 let mut q: Vec<_> = sorted_dims.iter().map(|&i| f_stats[i]).collect();
 
                 for i in 1..q.len() {
@@ -87,8 +108,12 @@ pub fn drilldown<'a>(
             .into_par_iter()
             .map(|i| {
                 let mut rng = StdRng::seed_from_u64(permutation_seed + i as u64);
-                let mut shuffled_groups = groups.clone();
-                shuffled_groups.shuffle(&mut rng);
+                let mut shuffled_labels = component_label.clone();
+                shuffled_labels.shuffle(&mut rng);
+                let shuffled_groups: Vec<_> = component_index_of_row
+                    .iter()
+                    .map(|&c| shuffled_labels[c])
+                    .collect();
                 let f_stats = f_per_dim_fast(&X, &shuffled_groups, &ss_totals);
                 let mut q: Vec<_> = sorted_dims.iter().map(|&i| f_stats[i]).collect();
 
