@@ -3,10 +3,8 @@ use std::{
     hash::Hash,
 };
 
+use disjoint::DisjointSet;
 use process_mining::core::event_data::object_centric::linked_ocel::LinkedOCELAccess;
-use union_find::UnionFind;
-
-mod union_find;
 
 /// Group ids for events and objects of one log.
 ///
@@ -70,7 +68,7 @@ where
 
     // Compute groups based on connected components, considering only connections
     // via non-divergent relationships.
-    let mut uf = UnionFind::new(ev_enum.len() + ob_enum.len());
+    let mut uf = DisjointSet::with_len(ev_enum.len() + ob_enum.len());
     locel.get_all_evs().for_each(|e| {
         let etype = locel.get_ev_type_of(e);
         let e_group = ev_enum[&e];
@@ -78,30 +76,28 @@ where
             let otype = locel.get_ob_type_of(o);
             // If we remove the check, we are using connected components.
             if !divergent.contains(&(etype, otype)) {
-                uf.union(e_group, ob_enum[o]);
+                uf.join(e_group, ob_enum[o]);
             }
         }
     });
 
     // Compact ("unsparse") group (component) ids so we can use them as indices later
-    let mut remap = HashMap::new();
-    let events: HashMap<_, _> = ev_enum
+    let mut group_of = vec![0; uf.len()];
+    uf.sets()
         .into_iter()
-        .map(|(e, group)| {
-            let root = uf.find(group);
-            let next = remap.len();
-            let new_group = *remap.entry(root).or_insert(next);
-            (e, new_group)
-        })
+        .enumerate()
+        .for_each(|(new_group_idx, members)| {
+            members
+                .into_iter()
+                .for_each(|member| group_of[member] = new_group_idx);
+        });
+    let events = ev_enum
+        .into_iter()
+        .map(|(e, idx)| (e, group_of[idx]))
         .collect();
-    let objects: HashMap<_, _> = ob_enum
+    let objects = ob_enum
         .into_iter()
-        .map(|(o, group)| {
-            let root = uf.find(group);
-            let next = remap.len();
-            let new_group = *remap.entry(root).or_insert(next);
-            (o, new_group)
-        })
+        .map(|(o, idx)| (o, group_of[idx]))
         .collect();
 
     DependencyComponents { events, objects }
