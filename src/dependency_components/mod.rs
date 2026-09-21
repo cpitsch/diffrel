@@ -44,8 +44,12 @@ where
     DependencyComponents { events, objects }
 }
 
-/// Compute groups of interdependent events and objects based on advanced case notions
-/// by van Detten et al. (ICPM 2024).
+/// Compute groups of interdependent events and objects based on a simplified version
+/// of advanced case notions by van Detten et al. (ICPM 2024).
+///
+/// The event-object graph is pruned by removing edges between a diverging pair
+/// of event and object and two events / two objects are considered "dependent"
+/// iff they are in the same connected component of the pruned event-object graph.
 pub fn compute_dependency_components<'a, T>(
     locel: &'a T,
 ) -> DependencyComponents<T::EventRepr, T::ObjectRepr>
