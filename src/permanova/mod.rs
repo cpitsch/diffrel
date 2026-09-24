@@ -12,7 +12,8 @@ pub struct PermAnovaResult {
     pub p_value: f64,
 }
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum PermAnovaError {
     #[error(
         "Both samples must have the same number of features. `sample_1` has {0} columns and `sample_2`has {1}"
