@@ -159,12 +159,12 @@ where
         };
 
         match res {
-            InstanceResult::Skipped(reason) => skipped.push(SkippedInstanceResult {
+            RawInstanceResult::Skipped(reason) => skipped.push(SkippedInstanceResult {
                 instance: instance.clone(),
                 reason,
             }),
 
-            InstanceResult::Result {
+            RawInstanceResult::Result {
                 n1,
                 n2,
                 pseudo_f,
@@ -216,7 +216,10 @@ where
     }
 }
 
-enum InstanceResult {
+/// Auxilliary raw output of a comparison, with no multiple testing correction
+/// applied.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RawInstanceResult {
     Skipped(SkipReason),
     Result {
         n1: usize,
@@ -227,21 +230,21 @@ enum InstanceResult {
 }
 
 #[allow(clippy::type_complexity)]
-fn run_instance<'a, R: Eq + Hash + Copy>(
+pub fn run_instance<'a, R: Eq + Hash + Copy>(
     instance: &ComparisonInstance,
     profile_1: &HashMap<&'a str, Vec<(R, RelationshipCount<'a>)>>,
     profile_2: &HashMap<&'a str, Vec<(R, RelationshipCount<'a>)>>,
     components: Option<(&HashMap<R, usize>, &HashMap<R, usize>)>,
     seed: u64,
     config: &ComparisonConfig,
-) -> InstanceResult {
+) -> RawInstanceResult {
     let in_log_1 = profile_1.contains_key(instance.group_key.as_str());
     if !in_log_1 {
-        return InstanceResult::Skipped(SkipReason::OnlyInLogOne);
+        return RawInstanceResult::Skipped(SkipReason::OnlyInLogOne);
     }
     let in_log_2 = profile_2.contains_key(instance.group_key.as_str());
     if !in_log_2 {
-        return InstanceResult::Skipped(SkipReason::OnlyInLogTwo);
+        return RawInstanceResult::Skipped(SkipReason::OnlyInLogTwo);
     }
 
     let counts_1 = &profile_1[instance.group_key.as_str()];
@@ -269,7 +272,7 @@ fn run_instance<'a, R: Eq + Hash + Copy>(
     };
 
     if ordered_relation_types.is_empty() {
-        return InstanceResult::Skipped(SkipReason::NoRelationsObserved);
+        return RawInstanceResult::Skipped(SkipReason::NoRelationsObserved);
     }
 
     let n1 = counts_1.len();
@@ -309,13 +312,13 @@ fn run_instance<'a, R: Eq + Hash + Copy>(
     };
 
     match res {
-        Ok(result) => InstanceResult::Result {
+        Ok(result) => RawInstanceResult::Result {
             n1,
             n2,
             pseudo_f: result.pseudo_f,
             p_value: result.p_value,
         },
-        Err(e) => InstanceResult::Skipped(SkipReason::TestFailed(e)),
+        Err(e) => RawInstanceResult::Skipped(SkipReason::TestFailed(e)),
     }
 }
 
