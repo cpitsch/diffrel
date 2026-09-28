@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use process_mining::core::event_data::object_centric::linked_ocel::LinkedOCELAccess;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RelationMode {
     E2O,
     O2O,
@@ -12,7 +12,7 @@ pub enum RelationMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ComparisonInstance {
     pub mode: RelationMode,
     /// The name of the "central entity" of the comparison. For E2O/E2E this is an

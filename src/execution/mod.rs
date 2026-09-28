@@ -24,12 +24,13 @@ use crate::{
         fast_euclidean::permanova as permanova_fast,
     },
     relation_extraction::{
-        Qualifier, RelationshipCount, extract_e2e_relation_counts, extract_e2o_relation_counts,
-        extract_o2e_relation_counts, extract_o2o_relation_counts,
+        RelationshipCount, compute_ordered_relation_types, extract_e2e_relation_counts,
+        extract_e2o_relation_counts, extract_o2e_relation_counts, extract_o2o_relation_counts,
     },
 };
 
 pub mod config;
+pub mod export;
 pub mod instance;
 pub mod result;
 
@@ -255,21 +256,8 @@ pub fn run_instance<'a, R: Eq + Hash + Copy>(
         .as_ref()
         .map(|target| target.iter().map(String::as_str).collect());
 
-    let ordered_relation_types: Vec<(Qualifier<'a>, &'a str)> = {
-        let all: HashSet<(Qualifier<'a>, &'a str)> = counts_1
-            .iter()
-            .chain(counts_2.iter())
-            .flat_map(|(_, x)| x.keys())
-            .cloned()
-            .collect();
-        match &allowed_targets {
-            Some(targets) => all
-                .into_iter()
-                .filter(|(_, t)| targets.contains(t))
-                .collect(),
-            None => all.into_iter().collect(),
-        }
-    };
+    let ordered_relation_types =
+        compute_ordered_relation_types(counts_1, counts_2, allowed_targets.as_ref());
 
     if ordered_relation_types.is_empty() {
         return RawInstanceResult::Skipped(SkipReason::NoRelationsObserved);
@@ -486,21 +474,8 @@ where
         .as_ref()
         .map(|target| target.iter().map(String::as_str).collect());
 
-    let ordered_relation_types: Vec<(Qualifier<'a>, &'a str)> = {
-        let all: HashSet<(Qualifier<'a>, &'a str)> = counts_1
-            .iter()
-            .chain(counts_2.iter())
-            .flat_map(|(_, x)| x.keys())
-            .cloned()
-            .collect();
-        match &allowed_targets {
-            Some(targets) => all
-                .into_iter()
-                .filter(|(_, t)| targets.contains(t))
-                .collect(),
-            None => all.into_iter().collect(),
-        }
-    };
+    let ordered_relation_types =
+        compute_ordered_relation_types(counts_1, counts_2, allowed_targets.as_ref());
 
     if ordered_relation_types.is_empty() {
         return Ok(vec![]);
