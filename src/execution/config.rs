@@ -1,12 +1,4 @@
-use crate::relation_extraction::E2ERelationType;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
-pub enum Distance {
-    BrayCurtis,
-    Euclidean,
-}
+use crate::{permanova::Distance, relation_extraction::E2ERelationType};
 
 // #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 // #[cfg_attr(feature = "serde", derive(serde::Serialize))]

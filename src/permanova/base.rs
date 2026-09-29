@@ -3,17 +3,15 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
-    iter::repeat_n,
 };
 
 use ndarray::{Array2, Axis, concatenate};
-use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
-
-#[cfg(feature = "rayon")]
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
-    permanova::{PermAnovaError, PermAnovaResult},
+    permanova::{
+        PermAnovaError, PermAnovaResult,
+        permutation::{SsWithinArgs, run_permanova_permutations},
+    },
     relation_extraction::{Qualifier, RelationshipCount},
 };
 /// Perform a Permanova test between two multivariate samples. Each row in the matrices
@@ -30,7 +28,7 @@ pub fn restricted_permanova(
     component_ids_1: &[usize],
     component_ids_2: &[usize],
     sq_distance_function: impl Fn(&[f64], &[f64]) -> f64,
-    num_permuations: usize,
+    num_permutations: usize,
     permutation_seed: Option<u64>,
 ) -> Result<PermAnovaResult, PermAnovaError> {
     let n1 = sample_1.nrows();
@@ -72,91 +70,15 @@ pub fn restricted_permanova(
 
     ss_total /= n as f64;
 
-    if ss_total == 0.0 {
-        // ss_within and ss_between will be 0, giving us pseudo_f NaN
-        return Ok(PermAnovaResult {
-            pseudo_f: f64::NAN,
-            permutation_distribution: vec![f64::NAN; num_permuations],
-            p_value: 1.0,
-        });
-    }
-
-    let groups: Vec<u8> = repeat_n(0, n1).chain(repeat_n(1, n2)).collect();
-
-    // F
-    let pseudo_f = compute_pseudo_f(&D2, &groups, ss_total);
-
-    // Precompute translation from vec of component labels to vec of items
-    let (component_ids_1, num_components_1) = compact_component_ids(component_ids_1);
-    let (component_ids_2, num_components_2) = compact_component_ids(component_ids_2);
-    let component_index_of_row: Vec<usize> = component_ids_1
-        .iter()
-        .copied()
-        .chain(component_ids_2.iter().map(|&c| c + num_components_1))
-        .collect();
-
-    // This is what we shuffle
-    let component_label: Vec<u8> = repeat_n(0u8, num_components_1)
-        .chain(repeat_n(1u8, num_components_2))
-        .collect();
-
-    #[cfg(not(feature = "rayon"))]
-    let permutation_distribution: Vec<f64> = {
-        let mut rng = if let Some(seed) = permutation_seed {
-            StdRng::seed_from_u64(seed)
-        } else {
-            StdRng::from_os_rng()
-        };
-
-        let mut shuffled_labels = component_label;
-        let mut shuffled_groups = vec![0u8; n];
-
-        (0..num_permuations)
-            .map(|_| {
-                shuffled_labels.shuffle(&mut rng);
-                shuffled_groups
-                    .iter_mut()
-                    .zip(&component_index_of_row)
-                    .for_each(|(group_of_row, &component)| {
-                        *group_of_row = shuffled_labels[component];
-                    });
-                compute_pseudo_f(&D2, &shuffled_groups, ss_total)
-            })
-            .collect()
-    };
-
-    #[cfg(feature = "rayon")]
-    let permutation_distribution: Vec<f64> = {
-        (0..num_permuations)
-            .into_par_iter()
-            .map(|i| {
-                let mut rng = if let Some(seed) = permutation_seed {
-                    StdRng::seed_from_u64(seed + i as u64)
-                } else {
-                    StdRng::from_os_rng()
-                };
-                let mut shuffled_labels = component_label.clone();
-                shuffled_labels.shuffle(&mut rng);
-                let shuffled_groups: Vec<_> = component_index_of_row
-                    .iter()
-                    .map(|&c| shuffled_labels[c])
-                    .collect();
-                compute_pseudo_f(&D2, &shuffled_groups, ss_total)
-            })
-            .collect()
-    };
-
-    let p_value = permutation_distribution
-        .iter()
-        .filter(|&&perm_f| perm_f >= pseudo_f)
-        .count() as f64
-        / (num_permuations as f64);
-
-    Ok(PermAnovaResult {
-        pseudo_f,
-        permutation_distribution,
-        p_value,
-    })
+    let args = SsWithinArgs::DistanceMatrix(&D2);
+    Ok(run_permanova_permutations(
+        |groups| args.compute_ss_within(groups),
+        ss_total,
+        component_ids_1,
+        component_ids_2,
+        num_permutations,
+        permutation_seed,
+    ))
 }
 
 pub(super) fn compact_component_ids(component_ids: &[usize]) -> (Vec<usize>, usize) {
@@ -199,7 +121,10 @@ pub fn permanova(
 ///
 /// TODO: The counts within groups never really change. Could pass them to skip
 /// some computation
-fn compute_sum_of_squares_within(#[expect(non_snake_case)] D2: &Array2<f64>, groups: &[u8]) -> f64 {
+pub(super) fn compute_sum_of_squares_within(
+    #[expect(non_snake_case)] D2: &Array2<f64>,
+    groups: &[u8],
+) -> f64 {
     let mut group_sums: [f64; 2] = [0.0, 0.0];
     let mut group_sizes: [usize; 2] = [0, 0];
 
@@ -226,32 +151,7 @@ fn compute_sum_of_squares_within(#[expect(non_snake_case)] D2: &Array2<f64>, gro
         .sum()
 }
 
-/// Compute the `SS_A` statistic as the difference between `SS_T` and `SS_W`
-#[inline(always)]
-fn compute_sum_of_squares_between(ss_total: f64, ss_within: f64) -> f64 {
-    ss_total - ss_within
-}
-
-/// Compute the Pseudo-F Statistic
-/// * `D2`: The matrix of squared distances.
-/// * `groups`: Assignment of rows in X to groups. 0 if the row belongs to log 1,
-///   1 if it belongs to log 2
-/// * `ss_total`: The `SS_T` measure (`1/n * distances_for_i<j`)
-fn compute_pseudo_f(
-    #[expect(non_snake_case)] D2: &Array2<f64>,
-    groups: &[u8],
-    ss_total: f64,
-) -> f64 {
-    // p is number of groups, i.e., 2. Thus, `ss_between`, i.e., SS_A is divided by 2-1=1
-
-    // SS_W
-    let ss_within = compute_sum_of_squares_within(D2, groups);
-    // SS_A
-    let ss_between = compute_sum_of_squares_between(ss_total, ss_within);
-
-    ss_between / (ss_within / (D2.nrows() - 2) as f64)
-}
-
+#[deprecated]
 pub fn compare_counts<'a, T>(
     counts_1: &HashMap<&'a str, Vec<(T, RelationshipCount<'a>)>>,
     counts_2: &HashMap<&'a str, Vec<(T, RelationshipCount<'a>)>>,

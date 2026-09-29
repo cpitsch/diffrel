@@ -7,10 +7,9 @@ use process_mining::core::event_data::object_centric::linked_ocel::LinkedOCELAcc
 
 use crate::{
     dependency_components::compute_dependency_components,
-    distances::squared_bray_curtis_distance,
     effect_size::cliffs_delta,
     execution::{
-        config::{ComparisonConfig, Distance, Grouping},
+        config::{ComparisonConfig, Grouping},
         instance::{ComparisonInstance, RelationMode},
         result::{
             ComparisonInstanceResult, ComparisonResult, DrilldownError, DrilldownRelationResult,
@@ -18,11 +17,7 @@ use crate::{
         },
     },
     multiple_testing::check_significance_holm_bonferroni,
-    permanova::{
-        base::{encode_relation_counts, restricted_permanova},
-        drilldown::drilldown,
-        fast_euclidean::permanova as permanova_fast,
-    },
+    permanova::{self, base::encode_relation_counts, drilldown::drilldown},
     relation_extraction::{
         RelationshipCount, compute_ordered_relation_types, extract_e2e_relation_counts,
         extract_e2o_relation_counts, extract_o2e_relation_counts, extract_o2o_relation_counts,
@@ -269,35 +264,23 @@ pub fn run_instance<'a, R: Eq + Hash + Copy>(
     let sample_1 = encode_relation_counts(counts_1, &ordered_relation_types);
     let sample_2 = encode_relation_counts(counts_2, &ordered_relation_types);
 
-    let res = match config.distance {
-        Distance::BrayCurtis => {
-            let (component_ids_1, component_ids_2) = match components {
-                Some((c1, c2)) => (
-                    counts_1.iter().map(|(r, _)| c1[r]).collect::<Vec<_>>(),
-                    counts_2.iter().map(|(r, _)| c2[r]).collect::<Vec<_>>(),
-                ),
-                None => ((0..n1).collect::<Vec<_>>(), (0..n2).collect::<Vec<_>>()),
-            };
-
-            restricted_permanova(
-                &sample_1,
-                &sample_2,
-                &component_ids_1,
-                &component_ids_2,
-                squared_bray_curtis_distance,
-                config.permutations,
-                Some(seed),
-            )
-        }
-        Distance::Euclidean => match config.grouping {
-            Grouping::Singletons => {
-                permanova_fast(&sample_1, &sample_2, config.permutations, Some(seed))
-            }
-            Grouping::Executions => {
-                todo!("fast euclidean does not yet support component-restricted permutation")
-            }
-        },
+    let (component_ids_1, component_ids_2) = match components {
+        Some((c1, c2)) => (
+            counts_1.iter().map(|(r, _)| c1[r]).collect::<Vec<_>>(),
+            counts_2.iter().map(|(r, _)| c2[r]).collect::<Vec<_>>(),
+        ),
+        None => ((0..n1).collect::<Vec<_>>(), (0..n2).collect::<Vec<_>>()),
     };
+
+    let res = permanova::restricted_permanova(
+        &sample_1,
+        &sample_2,
+        &component_ids_1,
+        &component_ids_2,
+        config.distance,
+        config.permutations,
+        Some(seed),
+    );
 
     match res {
         Ok(result) => RawInstanceResult::Result {
