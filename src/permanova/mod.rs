@@ -1,7 +1,15 @@
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+};
+
 use ndarray::Array2;
 use thiserror::Error;
 
-use crate::distances::squared_bray_curtis_distance;
+use crate::{
+    distances::squared_bray_curtis_distance,
+    relation_extraction::{Qualifier, RelationshipCount},
+};
 
 pub mod base;
 pub mod drilldown;
@@ -86,6 +94,84 @@ pub fn permanova(
         num_permutations,
         permutation_seed,
     )
+}
+
+pub fn compare_counts<'a, T>(
+    counts_1: &HashMap<&'a str, Vec<(T, RelationshipCount<'a>)>>,
+    counts_2: &HashMap<&'a str, Vec<(T, RelationshipCount<'a>)>>,
+    components_1: &HashMap<T, usize>,
+    components_2: &HashMap<T, usize>,
+    distance: Distance,
+    num_permuations: usize,
+    permutation_seed: Option<u64>,
+) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError>
+where
+    T: Eq + Hash + Copy,
+{
+    let all_group_keys: HashSet<_> = counts_1.keys().chain(counts_2.keys()).copied().collect();
+
+    let mut group_key_to_pval = HashMap::new();
+
+    // TODO: Could parallelize? But right now, I parallelize across permutations
+    for key in all_group_keys {
+        let (Some(rel_counts_1), Some(rel_counts_2)) = (counts_1.get(key), counts_2.get(key))
+        else {
+            log::info!("{key} only in one log");
+            continue;
+        };
+
+        // Get an index of ordered relation types (tuple of object type and qualifier)
+        let ordered_relation_types: Vec<_> = rel_counts_1
+            .iter()
+            .chain(rel_counts_2.iter())
+            .flat_map(|(_, x)| x.keys())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .cloned()
+            .collect();
+
+        let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
+        let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
+
+        let component_ids_1: Vec<usize> =
+            rel_counts_1.iter().map(|(t, _)| components_1[t]).collect();
+        let component_ids_2: Vec<usize> =
+            rel_counts_2.iter().map(|(t, _)| components_2[t]).collect();
+
+        let start = std::time::Instant::now();
+        let res = restricted_permanova(
+            &sample_1,
+            &sample_2,
+            &component_ids_1,
+            &component_ids_2,
+            distance,
+            num_permuations,
+            permutation_seed,
+        )?;
+        log::trace!("{key} took {:?}", start.elapsed());
+
+        group_key_to_pval.insert(key, res);
+    }
+
+    Ok(group_key_to_pval)
+}
+
+/// Encode relation counts for an event type in a matrix. Each row is an observation
+/// (event) and columns correspond to the relation types (I.e., `(qualifier,
+/// object_type)` pairs), as given in `ordered_relation_types`.
+///
+/// Observed relation counts that are not in `ordered_relation_types` are ignored
+/// and relation types that were not observed for an event are counted as `0`.
+pub fn encode_relation_counts<T>(
+    relation_counts: &[(T, RelationshipCount<'_>)],
+    ordered_relation_types: &[(Qualifier<'_>, &'_ str)],
+) -> Array2<f64> {
+    let mut res = Array2::zeros((relation_counts.len(), ordered_relation_types.len()));
+    for (idx, (_, counts)) in relation_counts.iter().enumerate() {
+        res.row_mut(idx)
+            .assign(&counts.encoded_f64(ordered_relation_types));
+    }
+    res
 }
 
 #[cfg(test)]

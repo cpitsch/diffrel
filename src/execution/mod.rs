@@ -17,7 +17,7 @@ use crate::{
         },
     },
     multiple_testing::check_significance_holm_bonferroni,
-    permanova::{self, base::encode_relation_counts, drilldown::drilldown},
+    permanova::{self, encode_relation_counts, drilldown::drilldown},
     relation_extraction::{
         RelationshipCount, compute_ordered_relation_types, extract_e2e_relation_counts,
         extract_e2o_relation_counts, extract_o2e_relation_counts, extract_o2o_relation_counts,
