@@ -6,21 +6,11 @@
 //!
 //! to compute the Pseudo-F statistic in linear time for euclidean distance.
 
-use std::{
-    collections::{HashMap, HashSet},
-    iter::repeat_n,
-};
-
 use ndarray::{Array2, Axis, concatenate};
-use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 
-#[cfg(feature = "rayon")]
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
-
-use crate::relation_extraction::{OcelRelationshipCounter, RelationshipCount};
-use crate::{
-    permanova::{PermAnovaError, PermAnovaResult},
-    relation_extraction::Qualifier,
+use crate::permanova::{
+    PermAnovaError, PermAnovaResult,
+    permutation::{SsWithinArgs, run_permanova_permutations},
 };
 
 /// Perform a Permanova test between two multivariate samples. Each row in the matrices
@@ -31,10 +21,12 @@ use crate::{
 ///
 /// Returns an `Err` if the number of features (columns) in the two matrices doesn't
 /// match
-pub fn permanova(
+pub fn restricted_permanova(
     sample_1: &Array2<f64>,
     sample_2: &Array2<f64>,
-    num_permuations: usize,
+    component_ids_1: &[usize],
+    component_ids_2: &[usize],
+    num_permutations: usize,
     permutation_seed: Option<u64>,
 ) -> Result<PermAnovaResult, PermAnovaError> {
     let n1 = sample_1.nrows();
@@ -88,90 +80,48 @@ pub fn permanova(
         // ss_within and ss_between will be 0, giving us pseudo_f NaN
         return Ok(PermAnovaResult {
             pseudo_f: f64::NAN,
-            permutation_distribution: vec![f64::NAN; num_permuations],
+            permutation_distribution: vec![f64::NAN; num_permutations],
             p_value: 1.0,
         });
     }
 
-    #[cfg_attr(feature = "rayon", allow(unused_mut))]
-    let mut groups: Vec<u8> = repeat_n(0, n1).chain(repeat_n(1, n2)).collect();
-
-    // F
-    let pseudo_f = compute_pseudo_f_fast(&X, &sq_norms, &groups, ss_total);
-
-    #[cfg(not(feature = "rayon"))]
-    let permutation_distribution: Vec<f64> = {
-        let mut rng = if let Some(seed) = permutation_seed {
-            StdRng::seed_from_u64(seed)
-        } else {
-            StdRng::from_os_rng()
-        };
-
-        (0..num_permuations)
-            .map(|_| {
-                groups.shuffle(&mut rng);
-                compute_pseudo_f_fast(&X, &sq_norms, &groups, ss_total)
-            })
-            .collect()
+    let args = SsWithinArgs::Euclidean {
+        X: &X,
+        sq_norms: &sq_norms,
     };
-
-    #[cfg(feature = "rayon")]
-    let permutation_distribution: Vec<f64> = {
-        (0..num_permuations)
-            .into_par_iter()
-            .map(|i| {
-                let mut rng = if let Some(seed) = permutation_seed {
-                    StdRng::seed_from_u64(seed + i as u64)
-                } else {
-                    StdRng::from_os_rng()
-                };
-                let mut shuffled_groups = groups.clone();
-                shuffled_groups.shuffle(&mut rng);
-                compute_pseudo_f_fast(&X, &sq_norms, &shuffled_groups, ss_total)
-            })
-            .collect()
-    };
-
-    let p_value = permutation_distribution
-        .iter()
-        .filter(|&&perm_f| perm_f >= pseudo_f)
-        .count() as f64
-        / (num_permuations as f64);
-
-    Ok(PermAnovaResult {
-        pseudo_f,
-        permutation_distribution,
-        p_value,
-    })
+    Ok(run_permanova_permutations(
+        |groups| args.compute_ss_within(groups),
+        ss_total,
+        component_ids_1,
+        component_ids_2,
+        num_permutations,
+        permutation_seed,
+    ))
 }
 
-/// Compute the pseudo-F statistic faster using the algebraic identity:
-///
-/// `$$\sum_{i<j} \left\|x_i-x_j\right\|^2=n\sum_i \left\|x_i\right\|^2-\left\|\sum_i x_i\right\|^2$$`
-///
-/// So, while the naive implementation (strictly following the definition) would
-/// compute for each group `$G_k$`:
-///
-/// `$$\frac{1}{n_k}\sum_{i<j\in G_k}\left\|x_i-x_j\right\|^2$$`,
-///
-/// we can equivalently compute:
-///
-/// `$$\sum_{i\in G_k}\left\|x_i\right\|^2-\frac{\left\|\sum_{i\in G_k} x_i\right\|^2}{n_k}$$`
-///
-/// This makes the computation of the pseudo-F statistic linear instead of quadratic
-///
-/// # Arguments
-///
-/// * `X`: The matrix of observations. Rows = observations, columns = features.
-/// * `sq_norms`: The squared norms of rows in X. That is, `sq_norms_i=sum(x^2 for x in X.row(i))`
-/// * `groups`: Assignment of rows in X to groups. 0 if the row belongs to log 1,
-///   1 if it belongs to log 2
-/// * `ss_total`: The `SS_T` measure (`1/n * distances_for_i<j`)
-fn compute_pseudo_f_fast(
+pub fn permanova(
+    sample_1: &Array2<f64>,
+    sample_2: &Array2<f64>,
+    num_permutations: usize,
+    permutation_seed: Option<u64>,
+) -> Result<PermAnovaResult, PermAnovaError> {
+    let component_ids_1: Vec<_> = (0..sample_1.nrows()).collect();
+    let component_ids_2: Vec<_> = (0..sample_2.nrows()).collect();
+
+    restricted_permanova(
+        sample_1,
+        sample_2,
+        &component_ids_1,
+        &component_ids_2,
+        num_permutations,
+        permutation_seed,
+    )
+}
+
+pub(super) fn compute_ss_within_fast(
     #[allow(non_snake_case)] X: &Array2<f64>,
     sq_norms: &[f64],
     groups: &[u8],
-    ss_total: f64,
 ) -> f64 {
     let n = X.nrows();
     let num_features = X.ncols();
@@ -201,7 +151,7 @@ fn compute_pseudo_f_fast(
     }
 
     // SS_W = sum for all groups of $$\sum_{i\in G_k}\left\|x_i\right\|^2-\frac{\left\|\sum_{i\in G_k} x_i\right\|^2}{n_k}$$
-    let ss_within = group_sums
+    group_sums
         .into_iter()
         .zip(sum_sq)
         .zip(group_sizes)
@@ -209,67 +159,5 @@ fn compute_pseudo_f_fast(
             let sq_of_sum: f64 = group_sum.iter().map(|&x| x * x).sum();
             sum_of_squares - (sq_of_sum / size as f64)
         })
-        .sum::<f64>();
-
-    let ss_between = ss_total - ss_within;
-    ss_between / (ss_within / (n - 2) as f64)
-}
-
-pub fn compare_counts<'a>(
-    counts_1: &OcelRelationshipCounter<'a>,
-    counts_2: &OcelRelationshipCounter<'a>,
-    num_permuations: usize,
-    permutation_seed: Option<u64>,
-) -> Result<HashMap<&'a str, PermAnovaResult>, PermAnovaError> {
-    let all_group_keys: HashSet<_> = counts_1.keys().chain(counts_2.keys()).copied().collect();
-
-    let mut group_key_to_pval = HashMap::new();
-
-    // TODO: Could parallelize? But right now, I parallelize across permutations
-    for key in all_group_keys {
-        let (Some(rel_counts_1), Some(rel_counts_2)) = (counts_1.get(key), counts_2.get(key))
-        else {
-            log::info!("{key} only in one log");
-            continue;
-        };
-
-        // Get an index of ordered relation types (tuple of object type and qualifier)
-        let ordered_relation_types: Vec<_> = rel_counts_1
-            .iter()
-            .chain(rel_counts_2.iter())
-            .flat_map(|x| x.keys())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .cloned()
-            .collect();
-
-        let sample_1 = encode_relation_counts(rel_counts_1, &ordered_relation_types);
-        let sample_2 = encode_relation_counts(rel_counts_2, &ordered_relation_types);
-
-        let start = std::time::Instant::now();
-        let res = permanova(&sample_1, &sample_2, num_permuations, permutation_seed)?;
-        log::trace!("{key} took {:?}", start.elapsed());
-
-        group_key_to_pval.insert(key, res);
-    }
-
-    Ok(group_key_to_pval)
-}
-
-/// Encode relation counts for an event type in a matrix. Each row is an observation
-/// (event) and columns correspond to the relation types (I.e., `(qualifier, object_type)` pairs),
-/// as given in `ordered_relation_types`.
-///
-/// Observed relation counts that are not in `ordered_relation_types` are ignored
-/// and relation types that were not observed for an event are counted as `0`.
-pub fn encode_relation_counts(
-    relation_counts: &[RelationshipCount<'_>],
-    ordered_relation_types: &[(Qualifier<'_>, &'_ str)],
-) -> Array2<f64> {
-    let mut res = Array2::zeros((relation_counts.len(), ordered_relation_types.len()));
-    for (idx, counts) in relation_counts.iter().enumerate() {
-        res.row_mut(idx)
-            .assign(&counts.encoded_f64(ordered_relation_types));
-    }
-    res
+        .sum()
 }

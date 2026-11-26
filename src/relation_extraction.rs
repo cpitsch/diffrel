@@ -135,6 +135,26 @@ impl DerefMut for OcelRelationshipCounter<'_> {
     }
 }
 
+pub fn compute_ordered_relation_types<'a, T>(
+    counts_1: &[(T, RelationshipCount<'a>)],
+    counts_2: &[(T, RelationshipCount<'a>)],
+    target_type_filter: Option<&HashSet<&str>>,
+) -> Vec<(Qualifier<'a>, &'a str)> {
+    let all: HashSet<(Qualifier<'a>, &'a str)> = counts_1
+        .iter()
+        .chain(counts_2.iter())
+        .flat_map(|(_, x)| x.keys())
+        .cloned()
+        .collect();
+    match &target_type_filter {
+        Some(targets) => all
+            .into_iter()
+            .filter(|(_, t)| targets.contains(t))
+            .collect(),
+        None => all.into_iter().collect(),
+    }
+}
+
 pub fn extract_e2o_relation_counts<'a, T>(
     linked_ocel: &'a T,
 ) -> OcelEventRelationshipCounter<'a, T::EventRepr>
@@ -253,6 +273,8 @@ where
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum E2ERelationType {
     DirectlyFollows,
     #[default]
