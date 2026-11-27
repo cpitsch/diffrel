@@ -4,13 +4,16 @@
 use std::collections::HashSet;
 
 use process_mining::core::event_data::object_centric::linked_ocel::LinkedOCELAccess;
+use serde::{Deserialize, Serialize};
 
-use crate::execution::{config::ComparisonConfig, result::ComparisonResult};
+use crate::{
+    execution::{config::ComparisonConfig, result::ComparisonResult},
+    joint_ocdfg::JointOcdfg,
+};
 
 const CURRENT_SCHEMA_VERSION: u8 = 1;
 
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ComparisonResultExport {
     /// The version of the document format.
     /// Will (hopefully) be used to resolve incompatibilities of exports of different
@@ -19,20 +22,37 @@ pub struct ComparisonResultExport {
     pub params: ComparisonConfig,
     pub logs: ExportLogsInfo,
     pub disjoint_types: ExportLogsDisjointTypes,
-    #[cfg_attr(feature = "serde", serde(flatten))]
+    #[serde(flatten)]
     pub result: ComparisonResult,
     pub summary: ExportSummary,
+
+    #[serde(
+        rename = "processModel",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub process_model: Option<ProcessModel>,
 }
 
 impl ComparisonResultExport {
-    pub fn new<'a, T: LinkedOCELAccess<'a>>(
+    pub fn new<'a, T>(
         result: ComparisonResult,
         config: &ComparisonConfig,
         log_1: &'a T,
         log_1_path: Option<String>,
         log_2: &'a T,
         log_2_path: Option<String>,
-    ) -> Self {
+    ) -> Self
+    where
+        T: LinkedOCELAccess<'a> + Sync,
+        T::ObjectRepr: Sync,
+        T::EventRepr: Sync,
+    {
+        let e2e_types: Option<HashSet<&str>> = config
+            .e2e_object_types
+            .as_ref()
+            .map(|types| types.iter().map(String::as_str).collect());
+
         let total_results = result.results.len();
         let significant_results = result.results.iter().filter(|r| r.test.significant).count();
         Self {
@@ -48,19 +68,22 @@ impl ComparisonResultExport {
                 total_results,
                 significant_results,
             },
+
+            process_model: Some(ProcessModel {
+                dfg: JointOcdfg::discover(log_1, log_2, e2e_types.as_ref()),
+                layout: None,
+            }),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExportLogsInfo {
     pub log_1: LogInfo,
     pub log_2: LogInfo,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LogInfo {
     pub path: Option<String>,
     pub num_events: usize,
@@ -88,8 +111,7 @@ impl LogInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExportLogsDisjointTypes {
     pub event_types: DisjointTypeSet,
     pub object_types: DisjointTypeSet,
@@ -128,16 +150,23 @@ impl ExportLogsDisjointTypes {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DisjointTypeSet {
     pub log_1: Vec<String>,
     pub log_2: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExportSummary {
     pub total_results: usize,
     pub significant_results: usize,
+}
+
+/// The `processModel` section of an export. Contains the joint OC-DFG, and the
+/// layouting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessModel {
+    pub dfg: JointOcdfg,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<serde_json::Value>,
 }
